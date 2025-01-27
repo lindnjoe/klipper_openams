@@ -89,6 +89,23 @@ add_updater()
     fi
 }
 
+# in the same fashion as add_update create a new function to add the contents of file_templates HDC1080.cfg to ~/klipper/klippy/extras/temperature_sensors.cfg
+add_hdc1080()
+{
+    echo -e -n "Adding HDC1080 sensor to temperature_sensors.cfg... "
+
+    if [ ! -f "${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg" ]; then
+        echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+        while read -r line; do
+            echo -e "${line}" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+        done < "$PWD/file_templates/HDC1080.cfg"
+        echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+        echo "[OK]"
+    else
+        echo -e "temperature_sensors.cfg already exists in klipper extras directory [SKIPPED]"
+    fi
+}
+
 restart_klipper()
 {
     echo -n "Restarting Klipper... "
@@ -112,13 +129,14 @@ stop_klipper()
 
 uninstall()
 {
-    if [ -f "${KLIPPER_PATH}/klippy/extras/openams.py" ]; then
+    if [ -f "${KLIPPER_PATH}/klippy/extras/oams.py" ]; then
         echo -n "Uninstalling OpenAMS... "
         rm -f "${KLIPPER_PATH}/klippy/extras/openams.py"
         echo "[OK]"
         echo "You can now remove the [update_manager openams] section in your moonraker.conf and delete this directory. Also remove all OpenAMS configurations from your Klipper configuration."
+        echo "You may also want to remove the HDC1080 sensor from temperature_sensors.cfg"
     else
-        echo "openams.py not found in \"${KLIPPER_PATH}/klippy/extras/\". Is it installed?"
+        echo "oams.py not found in \"${KLIPPER_PATH}/klippy/extras/\". Is it installed?"
         echo "[FAILED]"
     fi
 }
