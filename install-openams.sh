@@ -94,16 +94,12 @@ add_hdc1080()
 {
     echo -e -n "Adding HDC1080 sensor to temperature_sensors.cfg... "
 
-    if [ ! -f "${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg" ]; then
-        echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
-        while read -r line; do
-            echo -e "${line}" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
-        done < "$PWD/file_templates/HDC1080.cfg"
-        echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
-        echo "[OK]"
-    else
-        echo -e "temperature_sensors.cfg already exists in klipper extras directory [SKIPPED]"
-    fi
+    echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+    while read -r line; do
+        echo -e "${line}" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+    done < "$PWD/file_templates/HDC1080.cfg"
+    echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+    echo "[OK]"
 }
 
 restart_klipper()
