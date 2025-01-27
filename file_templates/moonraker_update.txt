@@ -1,0 +1,5 @@
+[update_manager led_effect]
+type: git_repo
+path: ~/klipper_openams
+origin: https://github.com/openamsorg/klipper_openams.git
+is_system_service: False
