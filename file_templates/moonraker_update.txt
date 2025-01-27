@@ -1,4 +1,4 @@
-[update_manager led_effect]
+[update_manager openams]
 type: git_repo
 path: ~/klipper_openams
 origin: https://github.com/openamsorg/klipper_openams.git
