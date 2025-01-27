@@ -58,7 +58,11 @@ check_folders()
 link_extension()
 {
     echo -n "Linking OpenAMS extension to Klipper... "
-    ln -sf "${SRCDIR}/openams.py" "${KLIPPER_PATH}/klippy/extras/openams.py"
+    # take in the src directory and link each of the files
+    for file in "${SRCDIR}"/*.py; do
+        ln -sf "${file}" "${KLIPPER_PATH}/klippy/extras/$(basename ${file})"
+    done
+
     echo "[OK]"
 }
 
@@ -114,7 +118,10 @@ uninstall()
 {
     if [ -f "${KLIPPER_PATH}/klippy/extras/openams.py" ]; then
         echo -n "Uninstalling OpenAMS... "
-        rm -f "${KLIPPER_PATH}/klippy/extras/openams.py"
+        # take in the src directory and rm each of the files in the klipper extras directory
+        for file in "${SRCDIR}"/*.py; do
+            rm -f "${KLIPPER_PATH}/klippy/extras/$(basename ${file})"
+        done
         echo "[OK]"
         echo "You can now remove the [update_manager openams] section in your moonraker.conf and delete this directory. Also remove all OpenAMS configurations from your Klipper configuration."
     else
