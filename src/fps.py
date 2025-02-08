@@ -42,8 +42,7 @@ class FPS:
     def _adc_callback(self, read_time, read_value):
         if self._reversed:
             read_value = 1.0 - read_value
-        else:
-            self.fps_value = read_value
+        self.fps_value = read_value
         if self.callbacks:
             for callback in self.callbacks:
                 callback(read_time, read_value)
@@ -52,6 +51,9 @@ class FPS:
         return {
             'fps_value': self.fps_value,
         }
+    
+    def get_value(self):
+        return self.fps_value
             
-def load_config_prefix(config):
+def load_config(config):
     return FPS(config)

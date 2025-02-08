@@ -27,6 +27,7 @@ done
 
 # Find SRCDIR from the pathname of this script
 SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/src/ && pwd )"
+SCRIPTSDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/scripts/ && pwd )"
 
 # Verify Klipper has been installed
 check_klipper()
@@ -58,7 +59,18 @@ check_folders()
 link_extension()
 {
     echo -n "Linking OpenAMS extension to Klipper... "
-    ln -sf "${SRCDIR}/openams.py" "${KLIPPER_PATH}/klippy/extras/openams.py"
+    for file in "${SRCDIR}"/*.py; do
+        ln -sf "${file}" "${KLIPPER_PATH}/klippy/extras/"
+    done
+    echo "[OK]"
+}
+
+link_scripts()
+{
+    echo -n "Linking OpenAMS scripts to Klipper... "
+    for file in "${SRCDIR}"/scripts/*.py; do
+        ln -sf "${file}" "${KLIPPER_PATH}/scripts/"
+    done
     echo "[OK]"
 }
 
@@ -127,7 +139,12 @@ uninstall()
 {
     if [ -f "${KLIPPER_PATH}/klippy/extras/oams.py" ]; then
         echo -n "Uninstalling OpenAMS... "
-        rm -f "${KLIPPER_PATH}/klippy/extras/openams.py"
+        for file in "${SRCDIR}"/*.py; do
+            unlink "${KLIPPER_PATH}/klippy/extras/$(basename $file)"
+        done
+        for file in "${SCRIPTSDIR}"/*.py; do
+            unlink "${KLIPPER_PATH}/scripts/$(basename $file)"
+        done
         echo "[OK]"
         echo "You can now remove the [update_manager openams] section in your moonraker.conf and delete this directory. Also remove all OpenAMS configurations from your Klipper configuration."
         echo "You may also want to remove the HDC1080 sensor from temperature_sensors.cfg"
@@ -153,6 +170,7 @@ check_folders
 stop_klipper
 if [ ! $UNINSTALL ]; then
     link_extension
+    link_scripts
     add_updater
     add_hdc1080
 else

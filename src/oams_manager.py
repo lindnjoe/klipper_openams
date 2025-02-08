@@ -46,11 +46,29 @@ class OAMSManager:
         self.monitor_pause_timer = None
         self.monitor_load_next_spool_timer = None
         self.monitor_timers = []
+        self.ready = False
+
+        self.fps = self.printer.lookup_object("fps")
         
         self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
+
+        self.webhooks = self.printer.lookup_object('webhooks')
+        self.webhooks.register_endpoint("openams/status", self._webhook_status)
         
         self.register_commands()
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+
+    def _webhook_status(self, request):
+        status = {"ready" : self.ready, "current_group" : self.current_group}
+        status["units"] = len(self.oams)
+        status["fps_value"] = self.fps.get_value()
+        status["filament_groups"] = {}
+        for group_name, group in self.filament_groups.items():
+            status["filament_groups"][group_name] = {
+                "bays": len(group.bays),
+                "spools": ["oams" + str(oam.oams_idx) + "-" + str(bay_index) for (oam, bay_index) in group.bays]
+            }
+        request.send({"status" : {"openams": status}})
 
     def get_status(self, eventtime):
         return {"current_group": self.current_group}
@@ -67,6 +85,7 @@ class OAMSManager:
     def handle_ready(self):
         self.determine_state()
         self.start_monitors()
+        self.ready = True
 
     def _log_status(self, is_printing):
         logging.info(
@@ -328,7 +347,7 @@ class OAMSManager:
         gcode.run_script("PAUSE")
         
     def _monitor_unload_speed(self, eventtime):
-        logging.info("OAMS: Monitoring unloading speed state: %s" % self.current_state.name)
+        #logging.info("OAMS: Monitoring unloading speed state: %s" % self.current_state.name)
         if self.current_state.name == "UNLOADING":
             self.encoder_samples.append(self.current_state.current_spool[0].encoder_clicks)
             if len(self.encoder_samples) < ENCODER_SAMPLES:
@@ -344,7 +363,7 @@ class OAMSManager:
         return eventtime + 1.0
     
     def _monitor_load_speed(self, eventtime):
-        logging.info("OAMS: Monitoring loading speed state: %s" % self.current_state.name)
+        #logging.info("OAMS: Monitoring loading speed state: %s" % self.current_state.name)
         if self.current_state.name == "LOADING" and self.reactor.monotonic() - self.current_state.since > MONITOR_ENCODER_LOADING_SPEED_AFTER:
             self.encoder_samples.append(self.current_state.current_spool[0].encoder_clicks)
             if len(self.encoder_samples) < ENCODER_SAMPLES:
