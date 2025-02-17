@@ -31,7 +31,7 @@ class FPS:
 
         self.ppins = self.printer.lookup_object('pins')
         self.adc = self.ppins.setup_pin('adc', self._pin)
-        self.adc.setup_adc_sample(self._sample_time, self._sample_count)
+        self.adc.setup_minmax(self._sample_time, self._sample_count)
         self.adc.setup_adc_callback(self._report_time, self._adc_callback)
         
         self.callbacks = []
