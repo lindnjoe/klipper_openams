@@ -12,9 +12,10 @@ from collections import deque
 
 PAUSE_DISTANCE = 60
 ENCODER_SAMPLES = 2
-MIN_ENCODER_DIFF = 10
+MIN_ENCODER_DIFF = 1
 FILAMENT_PATH_LENGTH_FACTOR = 1.14  # Replace magic number with a named constant
 MONITOR_ENCODER_LOADING_SPEED_AFTER = 2.0 # in seconds
+MONITOR_ENCODER_UNLOADING_SPEED_AFTER = 2.0 # in seconds
 
 class OAMSState:
     def __init__(self, name, since, current_spool):
@@ -348,7 +349,7 @@ class OAMSManager:
         
     def _monitor_unload_speed(self, eventtime):
         #logging.info("OAMS: Monitoring unloading speed state: %s" % self.current_state.name)
-        if self.current_state.name == "UNLOADING":
+        if self.current_state.name == "UNLOADING" and self.reactor.monotonic() - self.current_state.since > MONITOR_ENCODER_UNLOADING_SPEED_AFTER:
             self.encoder_samples.append(self.current_state.current_spool[0].encoder_clicks)
             if len(self.encoder_samples) < ENCODER_SAMPLES:
                 return eventtime + 1.0
