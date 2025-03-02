@@ -355,10 +355,10 @@ class OAMSManager:
             if len(self.encoder_samples) < ENCODER_SAMPLES:
                 return eventtime + 1.0
             encoder_diff = abs(self.encoder_samples[-1] - self.encoder_samples[0])
-            logging.info("OAMS[%d] Unload Monitor: Encoder diff %d" %(self.current_state.current_spool[1], encoder_diff))
+            logging.info("OAMS[%d] Unload Monitor: Encoder diff %d" %(self.current_state.current_spool[0].oams_idx, encoder_diff))
             if encoder_diff < MIN_ENCODER_DIFF:              
                 self.current_state.current_spool[0].set_led_error(self.current_state.current_spool[1], 1)
-                self._pause_printer_message("Printer paused because the unloading speed was too low")
+                self._pause_printer_message("Printer paused because the unloading speed of the moving filament was too low")
                 logging.info("after unload speed too low")
                 self.stop_monitors()
                 return self.printer.get_reactor().NEVER
@@ -371,10 +371,10 @@ class OAMSManager:
             if len(self.encoder_samples) < ENCODER_SAMPLES:
                 return eventtime + 1.0
             encoder_diff = abs(self.encoder_samples[-1] - self.encoder_samples[0])
-            logging.info("OAMS[%d] Load Monitor: Encoder diff %d" %(self.current_state.current_spool[1], encoder_diff))
+            logging.info("OAMS[%d] Load Monitor: Encoder diff %d" %(self.current_state.current_spool[0].oams_idx, encoder_diff))
             if encoder_diff < MIN_ENCODER_DIFF:
                 self.current_state.current_spool[0].set_led_error(self.current_state.current_spool[1], 1)               
-                self._pause_printer_message("Printer paused because the loading speed was too low")
+                self._pause_printer_message("Printer paused because the loading speed of the moving filament was too low")
                 self.stop_monitors()
                 return self.printer.get_reactor().NEVER
         return eventtime + 1.0
