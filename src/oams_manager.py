@@ -162,6 +162,7 @@ class OAMSManager:
         is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
     
         if is_printing and \
+            self.current_state.name == "LOADED" and \
             self.current_group is not None and \
             self.current_spool is not None and \
             not bool(self.current_spool[0].hub_hes_value[self.current_spool[1]]):
