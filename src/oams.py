@@ -162,6 +162,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             self.oams_pid_cmd = self.mcu.lookup_command(
                 "oams_cmd_pid kp=%u ki=%u kd=%u target=%u"
             )
+            # TODO: change this to reset the state of the AMS and determine it again instead
+            #       of directly doing it via klipper, let the firmware handle it
             self.oams_set_led_error_cmd = self.mcu.lookup_command(
                 "oams_set_led_error idx=%c value=%c"
             )
@@ -191,6 +193,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def set_led_error(self, idx, value):
         logging.info("Setting LED %d to %d", idx, value)
         self.oams_set_led_error_cmd.send([idx, value])
+        # TODO: need to restore the actual value of the LED when resetting the error
+        
             
     def determine_current_spool(self):
         params = self.oams_spool_query_spool_cmd.send()
