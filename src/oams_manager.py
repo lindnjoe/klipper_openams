@@ -49,7 +49,9 @@ class OAMSManager:
         self.monitor_timers = []
         self.ready = False
 
-        self.fps = self.printer.lookup_object("fps")
+        self.fpss = []
+        for (name, fps) in self.printer.lookup_objects(module="fps"):
+            self.fpss.append({"name": name, "fps": fps})
         
         self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
 
@@ -62,7 +64,11 @@ class OAMSManager:
     def _webhook_status(self, request):
         status = {"ready" : self.ready, "current_group" : self.current_group}
         status["units"] = len(self.oams)
-        status["fps_value"] = self.fps.get_value()
+        status["fps_values"] = []
+        
+        for (name,fps) in self.fpss.items():
+            status["fps_values"].append({"name": name, "value": fps.get_value()})
+            
         status["filament_groups"] = {}
         for group_name, group in self.filament_groups.items():
             status["filament_groups"][group_name] = {

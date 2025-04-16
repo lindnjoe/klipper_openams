@@ -10,7 +10,7 @@ class FPS:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
-        self.name = config.get_name().split()[-1]
+        self.name = config.get_name()
         self.printer.add_object(self.name, self)
         
         # state variables
@@ -59,5 +59,5 @@ class FPS:
     def get_value(self):
         return self.fps_value
             
-def load_config(config):
+def load_config_prefix(config):
     return FPS(config)
