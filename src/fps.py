@@ -26,6 +26,19 @@ class FPS:
         self._accel = config.getfloat('accel', 0.0)
         self._set_point = config.getfloat('set_point', 0.5)
         
+        extruder_name = config.get('extruder')
+        self.extruder = self.printer.lookup_object(extruder_name)
+        if self.extruder is None:
+            raise ValueError(f"Object '{extruder_name}' not found")
+        
+        self.oams_names = config.get('oams').split(',')
+        self.oams = []
+        for name in self.oams_names:
+            oam = self.printer.lookup_object("oams " + name.strip())
+            if oam is None:
+                raise ValueError(f"Object '{name}' not found")
+            self.oams.append(oam)
+        
         # printer objects
         self.ppins = self.adc = None
 
