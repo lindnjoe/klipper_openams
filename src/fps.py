@@ -26,10 +26,7 @@ class FPS:
         self._accel = config.getfloat('accel', 0.0)
         self._set_point = config.getfloat('set_point', 0.5)
         
-        extruder_name = config.get('extruder')
-        self.extruder = self.printer.lookup_object(extruder_name)
-        if self.extruder is None:
-            raise ValueError(f"Object '{extruder_name}' not found")
+        self.extruder_name = config.get('extruder')
         
         self.oams_names = config.get('oams').split(',')
         self.oams = []
@@ -52,6 +49,14 @@ class FPS:
         self.adc.setup_adc_callback(self._report_time, self._adc_callback)
         
         self.callbacks = []
+        
+        # handle ready
+        self.printer.register_event_handler("klippy:ready", self.on_ready)
+        
+    def on_ready(self):
+        self.extruder = self.printer.lookup_object(self.extruder_name)
+        if self.extruder is None:
+            raise ValueError(f"Object '{self.extruder_name}' not found")
         
     def add_callback(self, callback):
         self.callbacks.append(callback)
