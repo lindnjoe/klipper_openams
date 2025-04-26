@@ -52,8 +52,9 @@ class OAMSRunoutMonitor:
             if self.state == OAMSRunoutStateEnum.STOPPED or self.state == OAMSRunoutStateEnum.PAUSED or self.state == OAMSRunoutStateEnum.RELOADING:
                 pass
             elif self.state == OAMSRunoutStateEnum.MONITORING:
+                #logging.info("OAMS: Monitoring runout, is_printing: %s, fps_state: %s, fps_state.current_group: %s, fps_state.current_spool_idx: %s, oams: %s" % (is_printing, fps_state.state_name, fps_state.current_group, fps_state.current_spool_idx, fps_state.current_oams))
                 if is_printing and \
-                fps_state.name == "LOADED" and \
+                fps_state.state_name == "LOADED" and \
                 fps_state.current_group is not None and \
                 fps_state.current_spool_idx is not None and \
                 not bool(self.oams[fps_state.current_oams].hub_hes_value[fps_state.current_spool_idx]):
@@ -78,7 +79,7 @@ class OAMSRunoutMonitor:
             else:
                 raise ValueError(f"Invalid state: {self.state}")
             return eventtime + 1.0
-        self.timer = reactor.register_timer(self._monitor_runout, reactor.NOW)
+        self.timer = reactor.register_timer(_monitor_runout, reactor.NOW)
         
     def start(self):
         self.state = OAMSRunoutStateEnum.MONITORING    
@@ -157,11 +158,28 @@ class OAMSManager:
         self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
         
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.add_object("oams_manager", self)
+        self.register_commands()
+        
+    def get_status(self, eventtime):
+        attributes = {}
+        for(fps_name, fps_state) in self.current_state.fps_state.items():
+            attributes[fps_name] = {"current_group": fps_state.current_group,
+                                   "current_oams": fps_state.current_oams,
+                                   "current_spool_idx": fps_state.current_spool_idx,
+                                   "state_name": fps_state.state_name,
+                                   "since": fps_state.since}
+        return attributes
     
     def determine_state(self):
+        current_oams = None
         for (fps_name, fps_state) in self.current_state.fps_state.items():
-            fps_state.current_group, fps_state.current_oam, fps_state.current_spool_idx = self.determine_current_loaded_group(fps_name)
-            if fps_state.current_oam is not None and fps_state.current_spool_idx is not None:
+            fps_state.current_group, current_oams, fps_state.current_spool_idx = self.determine_current_loaded_group(fps_name)
+            if current_oams is not None:
+                fps_state.current_oams = current_oams.name
+            else:
+                fps_state.current_oams = None
+            if fps_state.current_oams is not None and fps_state.current_spool_idx is not None:
                 fps_state.state_name = "LOADED"
                 fps_state.since = self.reactor.monotonic()
         
@@ -251,6 +269,7 @@ class OAMSManager:
             gcmd.respond_info("Missing DIRECTION parameter")
             return
         fps_name = gcmd.get('FPS')
+        fps_name = "fps " + fps_name
         if fps_name is None:
             gcmd.respond_info("Missing FPS parameter")
             return
@@ -267,11 +286,11 @@ class OAMSManager:
         if fps_state.state_name == "UNLOADING":
             gcmd.respond_info(f"FPS {fps_name} is currently unloading a spool")
             return
-        fps_state.current_oams.set_oams_follower(enable, direction)
+        self.oams[fps_state.current_oams].set_oams_follower(enable, direction)
         fps_state.following = enable
         fps_state.direction = direction
-        fps_state.encoder = fps_state.current_oams.encoder_clicks
-        fps_state.current_spool_idx = fps_state.current_oams.current_spool
+        fps_state.encoder = self.oams[fps_state.current_oams].encoder_clicks
+        fps_state.current_spool_idx = self.oams[fps_state.current_oams].current_spool
         return
     
     def group_fps_name(self, group_name):
@@ -289,6 +308,7 @@ class OAMSManager:
         if fps_name is None:
             gcmd.respond_info("Missing FPS parameter")
             return
+        fps_name = "fps " + fps_name
         if fps_name not in self.fpss:
             gcmd.respond_info(f"FPS {fps_name} does not exist")
             return
@@ -389,7 +409,9 @@ class OAMSManager:
         def _monitor_unload_speed(self, eventtime):
             #logging.info("OAMS: Monitoring unloading speed state: %s" % self.current_state.name)
             fps_state = self.current_state.fps_state[fps_name]
-            oams = self.oams[fps_state.current_oams]
+            oams = None
+            if fps_state.current_oams is not None:
+                oams = self.oams[fps_state.current_oams]
             if fps_state.state_name == "UNLOADING" and self.reactor.monotonic() - fps_state.since > MONITOR_ENCODER_UNLOADING_SPEED_AFTER:
                 fps_state.encoder_samples.append(oams.encoder_clicks)
                 if len(fps_state.encoder_samples) < ENCODER_SAMPLES:
@@ -409,7 +431,9 @@ class OAMSManager:
         def _monitor_load_speed(self, eventtime):
             #logging.info("OAMS: Monitoring loading speed state: %s" % self.current_state.name)
             fps_state = self.current_state.fps_state[fps_name]
-            oams = self.oams[fps_state.current_oams]
+            oams = None
+            if fps_state.current_oams is not None:
+                oams = self.oams[fps_state.current_oams]
             if fps_state.state_name == "LOADING" and self.reactor.monotonic() - fps_state.since > MONITOR_ENCODER_LOADING_SPEED_AFTER:
                 fps_state.encoder_samples.append(oams.encoder_clicks)
                 if len(fps_state.encoder_samples) < ENCODER_SAMPLES:
@@ -428,7 +452,7 @@ class OAMSManager:
         self.monitor_timers = []
         reactor = self.printer.get_reactor()        
         for (fps_name, fps_state) in self.current_state.fps_state.items():
-            self.monitor_timers.append(reactor.register_timer(self._monitor_unload_speed(fps_name), reactor.NOW))
+            self.monitor_timers.append(reactor.register_timer(self._monitor_unload_speed_for_fps(fps_name), reactor.NOW))
             self.monitor_timers.append(reactor.register_timer(self._monitor_load_speed_for_fps(fps_name), reactor.NOW))
             
             def _reload_callback():

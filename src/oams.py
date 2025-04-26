@@ -92,7 +92,7 @@ class OAMS:
     
     def is_bay_loaded(self, bay_index):
         return bool(self.hub_hes_value[bay_index])
-
+    
     def stats(self, eventtime):
         return (
             False,
@@ -117,25 +117,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 self.i_value,
             ),
         )
-    
-    def get_webhook_status(self):
-        return {
-            "current_spool": self.current_spool,
-            "fps_value": self.fps_value,
-            "f1s_hes_value_0": self.f1s_hes_value[0],
-            "f1s_hes_value_1": self.f1s_hes_value[1],
-            "f1s_hes_value_2": self.f1s_hes_value[2],
-            "f1s_hes_value_3": self.f1s_hes_value[3],
-            "hub_hes_value_0": self.hub_hes_value[0],
-            "hub_hes_value_1": self.hub_hes_value[1],
-            "hub_hes_value_2": self.hub_hes_value[2],
-            "hub_hes_value_3": self.hub_hes_value[3],
-            "kp": self.kp,
-            "ki": self.ki,
-            "kd": self.kd,
-            "encoder_clicks": self.encoder_clicks,
-            "i_value": self.i_value,
-        }
 
     def handle_ready(self):
         try:
