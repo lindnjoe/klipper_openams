@@ -154,11 +154,9 @@ class OAMSManager:
         self.ready = False
 
         self.fpss = {}
-        for (fps_name, fps) in self.printer.lookup_objects(module="fps"):
-            self.fpss[fps_name] = fps
-            self.current_state.add_fps_state(fps_name)
-        
         self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
+        
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
     
     def determine_state(self):
         for (fps_name, fps_state) in self.current_state.fps_state.items():
@@ -168,6 +166,11 @@ class OAMSManager:
                 fps_state.since = self.reactor.monotonic()
         
     def handle_ready(self):
+        for (fps_name, fps) in self.printer.lookup_objects(module="fps"):
+            self.fpss[fps_name] = fps
+            self.current_state.add_fps_state(fps_name)
+        if self.fpss == {}:
+            raise ValueError("No FPS found in system, this is required for OAMS to work")
         self.determine_state()
         self.start_monitors()
         self.ready = True
