@@ -73,7 +73,7 @@ class OAMSRunoutMonitor:
                     self.state = OAMSRunoutStateEnum.COASTING
                     
             elif self.state == OAMSRunoutStateEnum.COASTING:
-                traveled_distance_after_bldc_clear = fps.extruder.last_position - fps_state.bldc_clear_position
+                traveled_distance_after_bldc_clear = fps.extruder.last_position - self.bldc_clear_position
                 if traveled_distance_after_bldc_clear + self.reload_before_toolhead_distance > self.oams[fps_state.current_oams].filament_path_length / FILAMENT_PATH_LENGTH_FACTOR:
                     logging.info("OAMS: Loading next spool in the filament group.")
                     self.state = OAMSRunoutStateEnum.RELOADING
