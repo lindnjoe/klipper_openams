@@ -34,8 +34,9 @@ class OAMSRunoutMonitor:
                  fps_name,
                  fps, 
                  fps_state,
-                 oams, 
-                 reload_callback):
+                 oams,
+                 reload_callback, 
+                 reload_before_toolhead_distance=0.0):
         self.oams = oams
         self.printer = printer
         self.fps_name = fps_name
@@ -44,6 +45,7 @@ class OAMSRunoutMonitor:
         self.state = OAMSRunoutStateEnum.STOPPED
         self.runout_position = None
         self.bldc_clear_position = None
+        self.reload_before_toolhead_distance = reload_before_toolhead_distance
         self.reload_callback = reload_callback
         reactor = self.printer.get_reactor()
         
@@ -478,7 +480,7 @@ class OAMSManager:
                 self.runout_monitor.paused()
                 return
             
-            self.runout_monitor = OAMSRunoutMonitor(self.printer, fps_name, self.fpss[fps_name], fps_state, self.oams, _reload_callback)
+            self.runout_monitor = OAMSRunoutMonitor(self.printer, fps_name, self.fpss[fps_name], fps_state, self.oams, _reload_callback, reload_before_toolhead_distance=self.reload_before_toolhead_distance)
             self.monitor_timers.append(self.runout_monitor.timer)
             self.runout_monitor.start()
             
