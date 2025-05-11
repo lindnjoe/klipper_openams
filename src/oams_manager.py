@@ -30,13 +30,15 @@ class OAMSRunoutStateEnum:
     
 class OAMSRunoutMonitor:
     def __init__(self, 
-                 printer, 
+                 printer,
+                 fps_name,
                  fps, 
                  fps_state,
                  oams, 
                  reload_callback):
         self.oams = oams
         self.printer = printer
+        self.fps_name = fps_name
         self.fps_state = fps_state
         self.fps = fps
         self.state = OAMSRunoutStateEnum.STOPPED
@@ -476,7 +478,7 @@ class OAMSManager:
                 self.runout_monitor.paused()
                 return
             
-            self.runout_monitor = OAMSRunoutMonitor(self.printer, self.fpss[fps_name], fps_state, self.oams, _reload_callback)
+            self.runout_monitor = OAMSRunoutMonitor(self.printer, fps_name, self.fpss[fps_name], fps_state, self.oams, _reload_callback)
             self.monitor_timers.append(self.runout_monitor.timer)
             self.runout_monitor.start()
             
