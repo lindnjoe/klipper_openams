@@ -475,7 +475,7 @@ class OAMSManager:
                             return
                         else:
                             logging.error(f"OAMS: Failed to load spool: {message}")
-                            raise Exception(message)
+                            break
                 self._pause_printer_message("No spool available for group %s" % fps_state.current_group)
                 self.runout_monitor.paused()
                 return
