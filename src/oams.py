@@ -85,7 +85,12 @@ class OAMS:
         super().__init__()
 
     def get_status(self, eventtime):
-        return {"current_spool": self.current_spool}
+    	return {
+         "current_spool": self.current_spool,
+         "f1s_hes_value": list(self.f1s_hes_value),
+         "hub_hes_value": list(self.hub_hes_value),
+         "fps_value": self.fps_value
+    }
     
     def is_bay_ready(self, bay_index):
         return bool(self.f1s_hes_value[bay_index])
@@ -560,3 +565,4 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
+
