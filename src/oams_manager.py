@@ -16,6 +16,7 @@ ENCODER_SAMPLES = 2  # Number of encoder samples to collect
 MIN_ENCODER_DIFF = 1  # Minimum encoder difference to consider movement
 FILAMENT_PATH_LENGTH_FACTOR = 1.14  # Factor for calculating filament path traversal
 MONITOR_ENCODER_LOADING_SPEED_AFTER = 2.0  # seconds
+MONITOR_ENCODER_PERIOD = 2.0 # seconds
 MONITOR_ENCODER_UNLOADING_SPEED_AFTER = 2.0  # seconds
 
 
@@ -105,7 +106,7 @@ class OAMSRunoutMonitor:
                     self.reload_callback()
             else:
                 raise ValueError(f"Invalid state: {self.state}")
-            return eventtime + 1.0
+            return eventtime + MONITOR_ENCODER_PERIOD
         self.timer = reactor.register_timer(_monitor_runout, reactor.NOW)
         
     def start(self) -> None:
@@ -564,7 +565,7 @@ class OAMSManager:
             if fps_state.state_name == "UNLOADING" and self.reactor.monotonic() - fps_state.since > MONITOR_ENCODER_UNLOADING_SPEED_AFTER:
                 fps_state.encoder_samples.append(oams.encoder_clicks)
                 if len(fps_state.encoder_samples) < ENCODER_SAMPLES:
-                    return eventtime + 1.0
+                    return eventtime + MONITOR_ENCODER_PERIOD
                 encoder_diff = abs(fps_state.encoder_samples[-1] - fps_state.encoder_samples[0])
                 logging.info("OAMS[%d] Unload Monitor: Encoder diff %d" %(oams.oams_idx, encoder_diff))
                 if encoder_diff < MIN_ENCODER_DIFF:              
@@ -573,7 +574,7 @@ class OAMSManager:
                     logging.info("after unload speed too low")
                     self.stop_monitors()
                     return self.printer.get_reactor().NEVER
-            return eventtime + 1.0
+            return eventtime + MONITOR_ENCODER_PERIOD
         return partial(_monitor_unload_speed, self)
     
     def _monitor_load_speed_for_fps(self, fps_name):
@@ -586,7 +587,7 @@ class OAMSManager:
             if fps_state.state_name == "LOADING" and self.reactor.monotonic() - fps_state.since > MONITOR_ENCODER_LOADING_SPEED_AFTER:
                 fps_state.encoder_samples.append(oams.encoder_clicks)
                 if len(fps_state.encoder_samples) < ENCODER_SAMPLES:
-                    return eventtime + 1.0
+                    return eventtime + MONITOR_ENCODER_PERIOD
                 encoder_diff = abs(fps_state.encoder_samples[-1] - fps_state.encoder_samples[0])
                 logging.info("OAMS[%d] Load Monitor: Encoder diff %d" % (oams.oams_idx, encoder_diff))
                 if encoder_diff < MIN_ENCODER_DIFF:
@@ -594,7 +595,7 @@ class OAMSManager:
                     self._pause_printer_message("Printer paused because the loading speed of the moving filament was too low")
                     self.stop_monitors()
                     return self.printer.get_reactor().NEVER
-            return eventtime + 1.0
+            return eventtime + MONITOR_ENCODER_PERIOD
         return partial(_monitor_load_speed, self)
     
     def start_monitors(self):

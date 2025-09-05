@@ -141,8 +141,8 @@ class FilamentGroup:
         """
         available = self.get_available_spools()
         return available[0] if available else None
-    
-    def get_status(self) -> dict:
+
+    def get_status(self, eventtime = None) -> dict:
         """
         Get current status of this filament group.
         
