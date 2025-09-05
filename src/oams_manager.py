@@ -4,103 +4,131 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-
 import logging
 import time
 from functools import partial
 from collections import deque
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List, Any, Callable
 
-PAUSE_DISTANCE = 60
-ENCODER_SAMPLES = 2
-MIN_ENCODER_DIFF = 1
-FILAMENT_PATH_LENGTH_FACTOR = 1.14  # Replace magic number with a named constant
-MONITOR_ENCODER_LOADING_SPEED_AFTER = 2.0 # in seconds
-MONITOR_ENCODER_UNLOADING_SPEED_AFTER = 2.0 # in seconds
+# Configuration constants
+PAUSE_DISTANCE = 60  # mm to pause before coasting follower
+ENCODER_SAMPLES = 2  # Number of encoder samples to collect
+MIN_ENCODER_DIFF = 1  # Minimum encoder difference to consider movement
+FILAMENT_PATH_LENGTH_FACTOR = 1.14  # Factor for calculating filament path traversal
+MONITOR_ENCODER_LOADING_SPEED_AFTER = 2.0  # seconds
+MONITOR_ENCODER_UNLOADING_SPEED_AFTER = 2.0  # seconds
 
 
-# enum of states
-class OAMSRunoutStateEnum:
-    STOPPED = "STOPPED"
-    MONITORING = "MONITORING"
-    DETECTED = "DETECTED"
-    COASTING = "COASTING"
-    RELOADING = "RELOADING"
-    PAUSED = "PAUSED"
+class OAMSRunoutState:
+    """Enum for runout monitor states."""
+    STOPPED = "STOPPED"          # Monitor is disabled
+    MONITORING = "MONITORING"    # Actively watching for runout
+    DETECTED = "DETECTED"        # Runout detected, pausing before coast
+    COASTING = "COASTING"        # Follower coasting, preparing next spool
+    RELOADING = "RELOADING"      # Loading next spool in sequence
+    PAUSED = "PAUSED"           # Monitor paused due to error/manual intervention
+
+
+class FPSLoadState:
+    """Enum for FPS loading states."""
+    UNLOADED = "UNLOADED"    # No filament loaded
+    LOADED = "LOADED"        # Filament loaded and ready
+    LOADING = "LOADING"      # Currently loading filament
+    UNLOADING = "UNLOADING"  # Currently unloading filament
     
 class OAMSRunoutMonitor:
+    """
+    Monitors filament runout for a specific FPS and handles automatic reload.
+    
+    State Management:
+    - Tracks runout detection and follower coasting
+    - Manages automatic spool switching within filament groups
+    - Coordinates with OAMS hardware for filament loading
+    """
+    
     def __init__(self, 
                  printer,
-                 fps_name,
+                 fps_name: str,
                  fps, 
                  fps_state,
-                 oams,
-                 reload_callback, 
-                 reload_before_toolhead_distance=0.0):
+                 oams: Dict[str, Any],
+                 reload_callback: Callable, 
+                 reload_before_toolhead_distance: float = 0.0):
+        # Core references
         self.oams = oams
         self.printer = printer
         self.fps_name = fps_name
         self.fps_state = fps_state
         self.fps = fps
-        self.state = OAMSRunoutStateEnum.STOPPED
-        self.runout_position = None
-        self.bldc_clear_position = None
+        
+        # State tracking
+        self.state = OAMSRunoutState.STOPPED
+        self.runout_position: Optional[float] = None
+        self.bldc_clear_position: Optional[float] = None
+        
+        # Configuration
         self.reload_before_toolhead_distance = reload_before_toolhead_distance
         self.reload_callback = reload_callback
+        
         reactor = self.printer.get_reactor()
         
         def _monitor_runout(eventtime):
             idle_timeout = self.printer.lookup_object("idle_timeout")
             is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
             
-            if self.state == OAMSRunoutStateEnum.STOPPED or self.state == OAMSRunoutStateEnum.PAUSED or self.state == OAMSRunoutStateEnum.RELOADING:
+            if self.state == OAMSRunoutState.STOPPED or self.state == OAMSRunoutState.PAUSED or self.state == OAMSRunoutState.RELOADING:
                 pass
-            elif self.state == OAMSRunoutStateEnum.MONITORING:
+            elif self.state == OAMSRunoutState.MONITORING:
                 #logging.info("OAMS: Monitoring runout, is_printing: %s, fps_state: %s, fps_state.current_group: %s, fps_state.current_spool_idx: %s, oams: %s" % (is_printing, fps_state.state_name, fps_state.current_group, fps_state.current_spool_idx, fps_state.current_oams))
                 if is_printing and \
                 fps_state.state_name == "LOADED" and \
                 fps_state.current_group is not None and \
                 fps_state.current_spool_idx is not None and \
                 not bool(self.oams[fps_state.current_oams].hub_hes_value[fps_state.current_spool_idx]):
-                    self.state = OAMSRunoutStateEnum.DETECTED
+                    self.state = OAMSRunoutState.DETECTED
                     logging.info(f"OAMS: Runout detected on FPS {self.fps_name}, pausing for {PAUSE_DISTANCE} mm before coasting the follower.")
                     self.runout_position = fps.extruder.last_position
             
-            elif self.state == OAMSRunoutStateEnum.DETECTED:
+            elif self.state == OAMSRunoutState.DETECTED:
                 traveled_distance = fps.extruder.last_position - self.runout_position
                 if traveled_distance >= PAUSE_DISTANCE:
                     logging.info("OAMS: Pause complete, coasting the follower.")
                     self.oams[fps_state.current_oams].set_oams_follower(0, 1)
                     self.bldc_clear_position = fps.extruder.last_position
-                    self.state = OAMSRunoutStateEnum.COASTING
+                    self.state = OAMSRunoutState.COASTING
                     
-            elif self.state == OAMSRunoutStateEnum.COASTING:
+            elif self.state == OAMSRunoutState.COASTING:
                 traveled_distance_after_bldc_clear = fps.extruder.last_position - self.bldc_clear_position
                 if traveled_distance_after_bldc_clear + self.reload_before_toolhead_distance > self.oams[fps_state.current_oams].filament_path_length / FILAMENT_PATH_LENGTH_FACTOR:
                     logging.info("OAMS: Loading next spool in the filament group.")
-                    self.state = OAMSRunoutStateEnum.RELOADING
+                    self.state = OAMSRunoutState.RELOADING
                     self.reload_callback()
             else:
                 raise ValueError(f"Invalid state: {self.state}")
             return eventtime + 1.0
         self.timer = reactor.register_timer(_monitor_runout, reactor.NOW)
         
-    def start(self):
-        self.state = OAMSRunoutStateEnum.MONITORING    
+    def start(self) -> None:
+        """Start monitoring for filament runout."""
+        self.state = OAMSRunoutState.MONITORING    
     
-    def stop(self):
-        self.state = OAMSRunoutStateEnum.STOPPED
+    def stop(self) -> None:
+        """Stop monitoring for filament runout."""
+        self.state = OAMSRunoutState.STOPPED
         
-    def reloading(self):
-        self.state = OAMSRunoutStateEnum.RELOADING
+    def reloading(self) -> None:
+        """Set state to reloading and reset positions."""
+        self.state = OAMSRunoutState.RELOADING
         self.runout_position = None
         self.runout_after_position = None
         
-    def paused(self):
-        self.state = OAMSRunoutStateEnum.PAUSED
+    def paused(self) -> None:
+        """Pause the monitor due to error or manual intervention."""
+        self.state = OAMSRunoutState.PAUSED
         
-    def reset(self):
-        self.state = OAMSRunoutStateEnum.STOPPED
+    def reset(self) -> None:
+        """Reset monitor to stopped state and clean up."""
+        self.state = OAMSRunoutState.STOPPED
         self.runout_position = None
         self.runout_after_position = None
         if self.timer is not None:
@@ -108,113 +136,230 @@ class OAMSRunoutMonitor:
             self.timer = None
 
 class OAMSState:
+    """
+    Global state container for all FPS units in the system.
+    
+    Attributes:
+    - fps_state: Dictionary mapping FPS names to their FPSState objects
+    """
+    
     def __init__(self):
-        self.fps_state = {}
-    def add_fps_state(self, fps_name):
+        self.fps_state: Dict[str, 'FPSState'] = {}
+        
+    def add_fps_state(self, fps_name: str) -> None:
+        """Add a new FPS state tracker."""
         self.fps_state[fps_name] = FPSState()
         
+
 class FPSState:
-    def __init__(self, state_name="UNLOADED", current_group = None, current_oams = None, current_spool_idx=None):
+    """
+    Tracks the state of a single FPS (Filament Pressure Sensor).
+    
+    Key State Variables:
+    - state_name: Current loading state (LOADED, UNLOADED, LOADING, UNLOADING)
+    - current_group: Filament group name (e.g., "T0", "T1") if loaded
+    - current_oams: Name of the OAMS unit currently loaded
+    - current_spool_idx: Index (0-3) of the spool bay currently loaded
+    
+    Monitoring State:
+    - encoder_samples: Recent encoder readings for motion detection
+    - following: Whether follower mode is active
+    - direction: Follower direction (0=forward, 1=reverse)
+    - since: Timestamp when current state began
+    """
+    
+    def __init__(self, 
+                 state_name: str = FPSLoadState.UNLOADED, 
+                 current_group: Optional[str] = None, 
+                 current_oams: Optional[str] = None, 
+                 current_spool_idx: Optional[int] = None):
         
-        self.state_name = state_name # name of the state, e.g. LOADED, UNLOADED, LOADING, UNLOADING
-        self.current_group = current_group # name of the group T0, T1, T2, etc., if any
-        self.current_oams = current_oams # name of the OAMS loaded, if any
-        self.current_spool_idx = current_spool_idx # index of the spool loaded, if any
+        # Primary state tracking
+        self.state_name = state_name  # FPSLoadState: LOADED, UNLOADED, LOADING, UNLOADING
+        self.current_group = current_group  # Filament group name (T0, T1, etc.)
+        self.current_oams = current_oams  # OAMS unit name currently loaded
+        self.current_spool_idx = current_spool_idx  # Spool bay index (0-3)
         
-        self.runout_position = None
-        self.runout_after_position = None
+        # Runout tracking
+        self.runout_position: Optional[float] = None
+        self.runout_after_position: Optional[float] = None
         
+        # Timer references (for cleanup)
         self.monitor_spool_timer = None
         self.monitor_pause_timer = None
         self.monitor_load_next_spool_timer = None
         
-        self.encoder_samples = deque(maxlen=ENCODER_SAMPLES)
+        # Motion monitoring
+        self.encoder_samples = deque(maxlen=ENCODER_SAMPLES)  # Recent encoder readings
         
-        self.following = False
-        self.direction = 0
-        self.since = None
+        # Follower state
+        self.following: bool = False  # Whether follower mode is active
+        self.direction: int = 0  # Follower direction (0=forward, 1=reverse)
+        self.since: Optional[float] = None  # Timestamp when current state began
         
-    def reset_runout_positions(self):
+    def reset_runout_positions(self) -> None:
+        """Clear runout position tracking."""
         self.runout_position = None
         self.runout_after_position = None
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"FPSState(state_name={self.state_name}, current_group={self.current_group}, current_oams={self.current_oams}, current_spool_idx={self.current_spool_idx})"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"State: {self.state_name}, Group: {self.current_group}, OAMS: {self.current_oams}, Spool Index: {self.current_spool_idx}"
 
 class OAMSManager:
+    """
+    Main coordinator for OpenAMS system with multiple FPS units.
+    
+    Manages:
+    - Multiple FPS (Filament Pressure Sensor) units
+    - OAMS (OpenAMS) hardware units  
+    - Filament groups (T0, T1, etc.) mapping to FPS units
+    - Automatic filament runout detection and switching
+    
+    Key Attributes:
+    - fpss: Dictionary of FPS objects {fps_name: fps_object}
+    - oams: Dictionary of OAMS objects {oams_name: oams_object}  
+    - filament_groups: Dictionary of filament groups {group_name: group_object}
+    - current_state: OAMSState tracking all FPS states
+    """
+    
     def __init__(self, config):
+        # Core configuration and printer interface
         self.config = config
         self.printer = config.get_printer()
-        self.filament_groups = {}
-        self.oams = {}
-        self._initialize_oams()
-        self._initialize_filament_groups()
-        self.current_state = OAMSState()
         self.reactor = self.printer.get_reactor()
         
-        self.monitor_timers = []
-        self.ready = False
-
-        self.fpss = {}
-        self.reload_before_toolhead_distance = config.getfloat("reload_before_toolhead_distance", 0.0)
+        # Hardware object collections
+        self.filament_groups: Dict[str, Any] = {}  # Group name -> FilamentGroup object
+        self.oams: Dict[str, Any] = {}  # OAMS name -> OAMS object
+        self.fpss: Dict[str, Any] = {}  # FPS name -> FPS object
         
+        # State management
+        self.current_state = OAMSState()  # Tracks state of all FPS units
+        
+        # Monitoring and control
+        self.monitor_timers: List[Any] = []  # Active monitoring timers
+        self.ready: bool = False  # System initialization complete
+        
+        # Configuration parameters
+        self.reload_before_toolhead_distance: float = config.getfloat("reload_before_toolhead_distance", 0.0)
+        
+        # Initialize hardware collections
+        self._initialize_oams()
+        self._initialize_filament_groups()
+        
+        # Register with printer and setup event handlers
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
         self.printer.add_object("oams_manager", self)
         self.register_commands()
         
-    def get_status(self, eventtime):
+    def get_status(self, eventtime: float) -> Dict[str, Dict[str, Any]]:
+        """
+        Return current status of all FPS units for monitoring.
+        
+        Returns:
+            Dictionary with FPS names as keys, each containing:
+            - current_group: Active filament group name
+            - current_oams: Active OAMS unit name  
+            - current_spool_idx: Active spool bay index (0-3)
+            - state_name: Loading state (LOADED/UNLOADED/LOADING/UNLOADING)
+            - since: Timestamp when current state began
+        """
         attributes = {}
-        for(fps_name, fps_state) in self.current_state.fps_state.items():
-            attributes[fps_name] = {"current_group": fps_state.current_group,
-                                   "current_oams": fps_state.current_oams,
-                                   "current_spool_idx": fps_state.current_spool_idx,
-                                   "state_name": fps_state.state_name,
-                                   "since": fps_state.since}
+        for fps_name, fps_state in self.current_state.fps_state.items():
+            attributes[fps_name] = {
+                "current_group": fps_state.current_group,
+                "current_oams": fps_state.current_oams,
+                "current_spool_idx": fps_state.current_spool_idx,
+                "state_name": fps_state.state_name,
+                "since": fps_state.since
+            }
         return attributes
     
-    def determine_state(self):
-        current_oams = None
-        for (fps_name, fps_state) in self.current_state.fps_state.items():
+    def determine_state(self) -> None:
+        """
+        Analyze hardware state and update FPS state tracking.
+        
+        For each FPS:
+        1. Check which filament group is currently loaded
+        2. Identify the active OAMS unit and spool bay
+        3. Update state to LOADED if filament is present
+        """
+        for fps_name, fps_state in self.current_state.fps_state.items():
             fps_state.current_group, current_oams, fps_state.current_spool_idx = self.determine_current_loaded_group(fps_name)
+            
             if current_oams is not None:
                 fps_state.current_oams = current_oams.name
             else:
                 fps_state.current_oams = None
+                
             if fps_state.current_oams is not None and fps_state.current_spool_idx is not None:
-                fps_state.state_name = "LOADED"
+                fps_state.state_name = FPSLoadState.LOADED
                 fps_state.since = self.reactor.monotonic()
         
-    def handle_ready(self):
-        for (fps_name, fps) in self.printer.lookup_objects(module="fps"):
+    def handle_ready(self) -> None:
+        """
+        Initialize system when printer is ready.
+        
+        1. Discover and register all FPS units
+        2. Create state tracking for each FPS
+        3. Determine current hardware state
+        4. Start monitoring timers
+        """
+        # Discover all FPS units in the system
+        for fps_name, fps in self.printer.lookup_objects(module="fps"):
             self.fpss[fps_name] = fps
             self.current_state.add_fps_state(fps_name)
-        if self.fpss == {}:
+            
+        if not self.fpss:
             raise ValueError("No FPS found in system, this is required for OAMS to work")
+            
+        # Initialize system state and start monitoring
         self.determine_state()
         self.start_monitors()
         self.ready = True
 
-    def _initialize_oams(self):
-        for (name, oam) in self.printer.lookup_objects(module="oams"):
+    def _initialize_oams(self) -> None:
+        """Discover and register all OAMS hardware units."""
+        for name, oam in self.printer.lookup_objects(module="oams"):
             self.oams[name] = oam
         
-    def _initialize_filament_groups(self):
-        for (name, group) in self.printer.lookup_objects(module="filament_group"):
-            name = name.split()[-1]
+    def _initialize_filament_groups(self) -> None:
+        """Discover and register all filament group configurations."""
+        for name, group in self.printer.lookup_objects(module="filament_group"):
+            name = name.split()[-1]  # Extract group name from full object name
             logging.info(f"OAMS: Adding group {name}")
             self.filament_groups[name] = group
     
     def determine_current_loaded_group(self, fps_name: str) -> Tuple[Optional[str], Optional[object], Optional[int]]:
-        fps = self.fpss[fps_name]
+        """
+        Determine which filament group is currently loaded in the specified FPS.
+        
+        Args:
+            fps_name: Name of the FPS to check
+            
+        Returns:
+            Tuple of (group_name, oams_object, bay_index) or (None, None, None) if unloaded
+            
+        Process:
+        1. Get the FPS object
+        2. Check each filament group for loaded bays
+        3. Verify the OAMS is connected to this FPS
+        4. Return the first match found
+        """
+        fps = self.fpss.get(fps_name)
         if fps is None:
             raise ValueError(f"FPS {fps_name} not found")
+            
+        # Check each filament group for loaded spools
         for group_name, group in self.filament_groups.items():
-            for (oam, bay_index) in group.bays:
+            for oam, bay_index in group.bays:
+                # Check if this bay has filament loaded and the OAMS is connected to this FPS
                 if oam.is_bay_loaded(bay_index) and oam in fps.oams:
                     return group_name, oam, bay_index
+                    
         return None, None, None
         
     def register_commands(self):
