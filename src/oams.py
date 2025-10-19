@@ -483,6 +483,22 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def set_oams_follower(self, enable, direction):
         self.oams_follower_cmd.send([enable, direction])
 
+    def abort_current_action(self, code: int = OAMSOpCode.ERROR_KLIPPER_CALL) -> None:
+        """Abort any in-flight hardware action initiated by Klipper helpers."""
+
+        if self.action_status is None:
+            return
+
+        logging.warning(
+            "OAMS[%d]: Aborting current action %s with code %d",
+            self.oams_idx,
+            self.action_status,
+            code,
+        )
+        self.action_status_code = code
+        self.action_status_value = None
+        self.action_status = None
+
     cmd_OAMS_FOLLOWER_help = "Enable or disable follower and set its direction"
 
     def cmd_OAMS_FOLLOWER(self, gcmd):

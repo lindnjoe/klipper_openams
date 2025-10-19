@@ -38,6 +38,16 @@ class FPS:
         self._sf_max_speed: float = config.getfloat('max_speed', 300.0)
         self._accel: float = config.getfloat('accel', 0.0)
         self._set_point: float = config.getfloat('set_point', 0.5)
+
+        # Runout monitoring configuration
+        #
+        # This optional safety margin allows integrators to fine tune when the
+        # runout monitor should reload for this specific FPS. When omitted, the
+        # global margin from [oams_manager] is used instead.
+        self.reload_before_toolhead_distance: Optional[float] = config.getfloat(
+            'reload_before_toolhead_distance',
+            default=None,
+        )
         
         # Associated objects
         self.extruder_name: str = config.get('extruder')
