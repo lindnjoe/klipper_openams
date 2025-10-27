@@ -10,6 +10,11 @@ import struct
 from math import pi
 from typing import Tuple, List, Optional, Any
 
+try:  # pragma: no cover - optional dependency during unit tests
+    from extras.ams_integration import AMSHardwareService
+except Exception:  # pragma: no cover - best-effort integration only
+    AMSHardwareService = None
+
 # OAMS Hardware Status Constants
 class OAMSStatus:
     """Hardware status codes reported by OAMS firmware."""
@@ -54,7 +59,7 @@ class OAMS:
     def __init__(self, config):
         # Core printer interface
         self.printer = config.get_printer()
-        self.name = config.get_name().split()[-1]
+        self.section_name = config.get_name().split()[-1]
         self.mcu = mcu.get_printer_mcu(self.printer, config.get("mcu", "mcu"))
         self.reactor = self.printer.get_reactor()
         
@@ -124,6 +129,18 @@ class OAMS:
         # Register commands and event handlers
         self.name = config.get_name()
         self.register_commands(self.name.split()[-1])
+
+        # Expose the underlying hardware controller to AFC when available.
+        if AMSHardwareService is not None:
+            try:
+                service = AMSHardwareService.for_printer(
+                    self.printer, self.section_name
+                )
+                service.attach_controller(self)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Failed to register OAMS controller with AMSHardwareService"
+                )
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
 
     def get_status(self, eventtime: float) -> dict:
@@ -626,4 +643,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
+
+
 
