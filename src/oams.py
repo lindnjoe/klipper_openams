@@ -141,7 +141,7 @@ class OAMS:
                 logging.getLogger(__name__).exception(
                     "Failed to register OAMS controller with AMSHardwareService"
                 )
-        self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.register_event_handler("klippy:connect", self.handle_connect)
 
     def get_status(self, eventtime: float) -> dict:
         """Return current hardware status for monitoring."""
@@ -185,7 +185,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             ),
         )
 
-    def handle_ready(self):
+    def handle_connect(self):
         try:
             self.oams_load_spool_cmd = self.mcu.lookup_command(
                 "oams_cmd_load_spool spool=%c"
@@ -643,6 +643,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
+
 
 
 
