@@ -8,55 +8,97 @@ import logging
 import mcu
 import struct
 from math import pi
+from typing import Tuple, List, Optional, Any
 
-OAMS_STATUS_LOADING = 0
-OAMS_STATUS_UNLOADING = 1
-OAMS_STATUS_FORWARD_FOLLOWING = 2
-OAMS_STATUS_REVERSE_FOLLOWING = 3
-OAMS_STATUS_COASTING = 4
-OAMS_STATUS_STOPPED = 5
-OAMS_STATUS_CALIBRATING = 6
-OAMS_STATUS_ERROR = 7
+try:  # pragma: no cover - optional dependency during unit tests
+    from extras.ams_integration import AMSHardwareService
+except Exception:  # pragma: no cover - best-effort integration only
+    AMSHardwareService = None
 
-OAMS_OP_CODE_SUCCESS = 0
-OAMS_OP_CODE_ERROR_UNSPECIFIED = 1
-OAMS_OP_CODE_ERROR_BUSY = 2
-OAMS_OP_CODE_SPOOL_ALREADY_IN_BAY  = 3
-OAMS_OP_CODE_NO_SPOOL_IN_BAY = 4
-OAMS_OP_CODE_ERROR_KLIPPER_CALL  = 5
+# OAMS Hardware Status Constants
+class OAMSStatus:
+    """Hardware status codes reported by OAMS firmware."""
+    LOADING = 0              # Currently loading filament
+    UNLOADING = 1            # Currently unloading filament  
+    FORWARD_FOLLOWING = 2    # Following extruder in forward direction
+    REVERSE_FOLLOWING = 3    # Following extruder in reverse direction
+    COASTING = 4             # Coasting without active control
+    STOPPED = 5              # Motor stopped, idle state
+    CALIBRATING = 6          # Running calibration procedure
+    ERROR = 7                # Error state requiring intervention
+
+# OAMS Operation Result Codes  
+class OAMSOpCode:
+    """Operation result codes from OAMS firmware."""
+    SUCCESS = 0                    # Operation completed successfully
+    ERROR_UNSPECIFIED = 1         # Generic error occurred
+    ERROR_BUSY = 2                # OAMS busy with another operation
+    SPOOL_ALREADY_IN_BAY = 3      # Attempted to load when bay occupied
+    NO_SPOOL_IN_BAY = 4           # Attempted to unload empty bay
+    ERROR_KLIPPER_CALL = 5        # Error in Klipper communication
 
 
 class OAMS:
+    """
+    OpenAMS hardware controller for managing filament spools.
+    
+    Hardware Interface:
+    - Controls 4 filament bays (indexed 0-3)
+    - Monitors Hall Effect Sensors (HES) for spool detection
+    - Manages BLDC motor for filament feeding
+    - Tracks encoder position for motion feedback
+    
+    Key State Variables:
+    - current_spool: Index (0-3) of currently loaded spool, None if unloaded
+    - f1s_hes_value: Array of filament sensor readings [bay0, bay1, bay2, bay3]
+    - hub_hes_value: Array of hub sensor readings [bay0, bay1, bay2, bay3] 
+    - fps_value: Current pressure sensor reading
+    - encoder_clicks: Current encoder position
+    """
+    
     def __init__(self, config):
+        # Core printer interface
         self.printer = config.get_printer()
-        self.name = config.get_name().split()[-1]
+        self.section_name = config.get_name().split()[-1]
         self.mcu = mcu.get_printer_mcu(self.printer, config.get("mcu", "mcu"))
-        self.fps_upper_threshold = config.getfloat("fps_upper_threshold")
-        self.fps_lower_threshold = config.getfloat("fps_lower_threshold")
-        self.fps_is_reversed = config.getboolean("fps_is_reversed")
-        self.i_value = 0.0
-        self.encoder_clicks = 0
+        self.reactor = self.printer.get_reactor()
         
-        self.f1s_hes_on = list(
+        # Hardware configuration - Pressure sensor thresholds
+        self.fps_upper_threshold: float = config.getfloat("fps_upper_threshold")
+        self.fps_lower_threshold: float = config.getfloat("fps_lower_threshold") 
+        self.fps_is_reversed: bool = config.getboolean("fps_is_reversed")
+        
+        # Current state variables
+        self.current_spool: Optional[int] = None  # Currently loaded spool index (0-3)
+        self.encoder_clicks: int = 0  # Current encoder position
+        self.i_value: float = 0.0  # Current sensor value
+        
+        # Sensor configuration - Hall Effect Sensor thresholds
+        self.f1s_hes_on: List[float] = list(
             map(lambda x: float(x.strip()), config.get("f1s_hes_on").split(","))
         )
-        self.f1s_hes_is_above = config.getboolean("f1s_hes_is_above")
-        self.hub_hes_on = list(
+        self.f1s_hes_is_above: bool = config.getboolean("f1s_hes_is_above")
+        self.hub_hes_on: List[float] = list(
             map(lambda x: float(x.strip()), config.get("hub_hes_on").split(","))
         )
-        self.hub_hes_is_above = config.getboolean("hub_hes_is_above")
-        self.filament_path_length = config.getfloat("ptfe_length")
-        self.oams_idx = config.getint("oams_idx")
+        self.hub_hes_is_above: bool = config.getboolean("hub_hes_is_above")
+        
+        # Physical configuration
+        self.filament_path_length: float = config.getfloat("ptfe_length")
+        self.oams_idx: int = config.getint("oams_idx")
 
-        self.kd = config.getfloat("kd", 0.0)
-        self.ki = config.getfloat("ki", 0.0)
-        self.kp = config.getfloat("kp", 6.0)
+        # PID control parameters for pressure
+        self.kd: float = config.getfloat("kd", 0.0)
+        self.ki: float = config.getfloat("ki", 0.0)
+        self.kp: float = config.getfloat("kp", 6.0)
 
-        self.current_kp = config.getfloat("current_kp", 0.375)
-        self.current_ki = config.getfloat("current_ki", 0.0)
-        self.current_kd = config.getfloat("current_kd", 0.0)
+        # PID control parameters for current
+        self.current_kp: float = config.getfloat("current_kp", 0.375)
+        self.current_ki: float = config.getfloat("current_ki", 0.0)
+        self.current_kd: float = config.getfloat("current_kd", 0.0)
 
-        self.fps_target = config.getfloat(
+        # Target values
+        self.fps_target: float = config.getfloat(
             "fps_target",
             0.5,
             minval=0.0,
@@ -64,35 +106,60 @@ class OAMS:
             above=self.fps_lower_threshold,
             below=self.fps_upper_threshold,
         )
-        self.current_target = config.getfloat(
+        self.current_target: float = config.getfloat(
             "current_target", 0.3, minval=0.1, maxval=0.4
         )
-        self.current_spool = None
+        
+        # Hardware state arrays (updated by firmware)
+        self.fps_value: float = 0  # Current pressure reading
+        self.f1s_hes_value: List[int] = [0, 0, 0, 0]  # Filament sensors [bay0, bay1, bay2, bay3]
+        self.hub_hes_value: List[int] = [0, 0, 0, 0]  # Hub sensors [bay0, bay1, bay2, bay3]
+        
+        # Action status tracking
+        self.action_status: Optional[int] = None
+        self.action_status_code: Optional[int] = None
+        self.action_status_value: Optional[int] = None
+        
+        # Setup MCU communication
         self.mcu.register_response(self._oams_action_status, "oams_action_status")
         self.mcu.register_response(self._oams_cmd_stats, "oams_cmd_stats")
         self.mcu.register_response(self._oams_cmd_current_stats, "oams_cmd_current_status")
         self.mcu.register_config_callback(self._build_config)
+        
+        # Register commands and event handlers
         self.name = config.get_name()
         self.register_commands(self.name.split()[-1])
-        # self.printer.add_object("oams", self)
-        self.reactor = self.printer.get_reactor()
-        self.action_status = None
-        self.action_status_code = None
-        self.printer.register_event_handler("klippy:connect", self.handle_connect)
-        self.fps_value = 0
-        self.f1s_hes_value = [0, 0, 0, 0]
-        self.hub_hes_value = [0, 0, 0, 0]
-        super().__init__()
 
-    def get_status(self, eventtime):
-        return {"current_spool": self.current_spool}
+        # Expose the underlying hardware controller to AFC when available.
+        if AMSHardwareService is not None:
+            try:
+                service = AMSHardwareService.for_printer(
+                    self.printer, self.section_name
+                )
+                service.attach_controller(self)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Failed to register OAMS controller with AMSHardwareService"
+                )
+        self.printer.register_event_handler("klippy:connect", self.handle_connect)
+
+    def get_status(self, eventtime: float) -> dict:
+        """Return current hardware status for monitoring."""
+        return {
+            "current_spool": self.current_spool,
+            "f1s_hes_value": list(self.f1s_hes_value),
+            "hub_hes_value": list(self.hub_hes_value),
+            "fps_value": self.fps_value
+        }
     
-    def is_bay_ready(self, bay_index):
+    def is_bay_ready(self, bay_index: int) -> bool:
+        """Check if a spool bay has filament ready to load (filament sensor active)."""
         return bool(self.f1s_hes_value[bay_index])
     
-    def is_bay_loaded(self, bay_index):
+    def is_bay_loaded(self, bay_index: int) -> bool:
+        """Check if a spool bay has filament loaded into the hub (hub sensor active)."""
         return bool(self.hub_hes_value[bay_index])
-
+    
     def stats(self, eventtime):
         return (
             False,
@@ -117,25 +184,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 self.i_value,
             ),
         )
-    
-    def get_webhook_status(self):
-        return {
-            "current_spool": self.current_spool,
-            "fps_value": self.fps_value,
-            "f1s_hes_value_0": self.f1s_hes_value[0],
-            "f1s_hes_value_1": self.f1s_hes_value[1],
-            "f1s_hes_value_2": self.f1s_hes_value[2],
-            "f1s_hes_value_3": self.f1s_hes_value[3],
-            "hub_hes_value_0": self.hub_hes_value[0],
-            "hub_hes_value_1": self.hub_hes_value[1],
-            "hub_hes_value_2": self.hub_hes_value[2],
-            "hub_hes_value_3": self.hub_hes_value[3],
-            "kp": self.kp,
-            "ki": self.ki,
-            "kd": self.kd,
-            "encoder_clicks": self.encoder_clicks,
-            "i_value": self.i_value,
-        }
 
     def handle_connect(self):
         try:
@@ -354,7 +402,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     cmd_OAMS_CALIBRATE_HUB_HES_help = "Calibrate the range of a single hub HES"
 
     def cmd_OAMS_CALIBRATE_HUB_HES(self, gcmd):
-        self.action_status = OAMS_STATUS_CALIBRATING
+        self.action_status = OAMSStatus.CALIBRATING
         spool_idx = gcmd.get_int("SPOOL", None)
         if spool_idx is None:
             raise gcmd.error("SPOOL index is required")
@@ -363,7 +411,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self.oams_calibrate_hub_hes_cmd.send([spool_idx])
         while self.action_status is not None:
             self.reactor.pause(self.reactor.monotonic() + 0.1)
-        if self.action_status_code == OAMS_OP_CODE_SUCCESS:
+        if self.action_status_code == OAMSOpCode.SUCCESS:
             value = self.u32_to_float(self.action_status_value)
             gcmd.respond_info("Calibrated HES %d to %f threshold" % (spool_idx, value))
             configfile = self.printer.lookup_object("configfile")
@@ -377,14 +425,14 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     cmd_OAMS_CALIBRATE_PTFE_LENGTH_help = "Calibrate the length of the PTFE tube"
 
     def cmd_OAMS_CALIBRATE_PTFE_LENGTH(self, gcmd):
-        self.action_status = OAMS_STATUS_CALIBRATING
+        self.action_status = OAMSStatus.CALIBRATING
         spool = gcmd.get_int("SPOOL", None)
         if spool is None:
             raise gcmd.error("SPOOL index is required")
         self.oams_calibrate_ptfe_length_cmd.send([spool])
         while self.action_status is not None:
             self.reactor.pause(self.reactor.monotonic() + 0.1)
-        if self.action_status_code == OAMS_OP_CODE_SUCCESS:
+        if self.action_status_code == OAMSOpCode.SUCCESS:
             gcmd.respond_info("Calibrated PTFE length to %d" % self.action_status_value)
             configfile = self.printer.lookup_object("configfile")
             configfile.set(self.name, "ptfe_length", "%d" % (self.action_status_value,))
@@ -393,16 +441,16 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             gcmd.error("Calibration of PTFE length failed")
 
     def load_spool(self, spool_idx):
-        self.action_status = OAMS_STATUS_LOADING
+        self.action_status = OAMSStatus.LOADING
         self.oams_load_spool_cmd.send([spool_idx])
         while self.action_status is not None:
             self.reactor.pause(self.reactor.monotonic() + 0.1)
-        if self.action_status_code == OAMS_OP_CODE_SUCCESS:
+        if self.action_status_code == OAMSOpCode.SUCCESS:
             self.current_spool = spool_idx
             return True, "Spool loaded successfully"
-        elif self.action_status_code == OAMS_OP_CODE_ERROR_KLIPPER_CALL:
+        elif self.action_status_code == OAMSOpCode.ERROR_KLIPPER_CALL:
             return False, "Spool loading stopped by klipper monitor"
-        elif self.action_status_code == OAMS_OP_CODE_ERROR_BUSY:
+        elif self.action_status_code == OAMSOpCode.ERROR_BUSY:
             return False, "OAMS is busy"
         else:
             return False, "Unknown error from OAMS with code %d" % self.action_status_code
@@ -410,7 +458,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     cmd_OAMS_LOAD_SPOOL_help = "Load a new spool of filament"
 
     def cmd_OAMS_LOAD_SPOOL(self, gcmd):
-        self.action_status = OAMS_STATUS_LOADING
+        self.action_status = OAMSStatus.LOADING
         self.oams_spool_query_spool_cmd.send()
         spool_idx = gcmd.get_int("SPOOL", None)
         if spool_idx is None:
@@ -426,16 +474,16 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             gcmd.error(message)
             
     def unload_spool(self):
-        self.action_status = OAMS_STATUS_UNLOADING
+        self.action_status = OAMSStatus.UNLOADING
         self.oams_unload_spool_cmd.send()
         while self.action_status is not None:
             self.reactor.pause(self.reactor.monotonic() + 0.1)
-        if self.action_status_code == OAMS_OP_CODE_SUCCESS:
+        if self.action_status_code == OAMSOpCode.SUCCESS:
             self.current_spool = None
             return True, "Spool unloaded successfully"
-        elif self.action_status_code == OAMS_OP_CODE_ERROR_KLIPPER_CALL:
+        elif self.action_status_code == OAMSOpCode.ERROR_KLIPPER_CALL:
             return False, "Spool unloading stopped by klipper monitor"
-        elif self.action_status_code == OAMS_OP_CODE_ERROR_BUSY:
+        elif self.action_status_code == OAMSOpCode.ERROR_BUSY:
             return False, "OAMS is busy"
         else:
             return False, "Unknown error from OAMS"
@@ -451,6 +499,22 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
     def set_oams_follower(self, enable, direction):
         self.oams_follower_cmd.send([enable, direction])
+
+    def abort_current_action(self, code: int = OAMSOpCode.ERROR_KLIPPER_CALL) -> None:
+        """Abort any in-flight hardware action initiated by Klipper helpers."""
+
+        if self.action_status is None:
+            return
+
+        logging.warning(
+            "OAMS[%d]: Aborting current action %s with code %d",
+            self.oams_idx,
+            self.action_status,
+            code,
+        )
+        self.action_status_code = code
+        self.action_status_value = None
+        self.action_status = None
 
     cmd_OAMS_FOLLOWER_help = "Enable or disable follower and set its direction"
 
@@ -489,20 +553,20 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
     def _oams_action_status(self, params):
         logging.info("oams status received")
-        if params["action"] == OAMS_STATUS_LOADING:
+        if params["action"] == OAMSStatus.LOADING:
             self.action_status = None
             self.action_status_code = params["code"]
-        elif params["action"] == OAMS_STATUS_UNLOADING:
+        elif params["action"] == OAMSStatus.UNLOADING:
             self.action_status = None
             self.action_status_code = params["code"]
-        elif params["action"] == OAMS_STATUS_CALIBRATING:
+        elif params["action"] == OAMSStatus.CALIBRATING:
             self.action_status = None
             self.action_status_code = params["code"]
             self.action_status_value = params["value"]
-        elif params["action"] == OAMS_STATUS_ERROR:
+        elif params["action"] == OAMSStatus.ERROR:
             self.action_status = None
             self.action_status_code = params["code"]
-        elif params["code"] == OAMS_OP_CODE_ERROR_KLIPPER_CALL:
+        elif params["code"] == OAMSOpCode.ERROR_KLIPPER_CALL:
             self.action_status = None
             self.action_status_code = params["code"]
         else:
@@ -579,3 +643,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
+
+
+
+
