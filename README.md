@@ -46,6 +46,12 @@ cp AFC_AMS1.cfg <printer_data path>/config/AFC/
 If you used the default installation layout, the destination path will be
 `~/printer_data/config/AFC/`.
 
+Infinite spooling no longer requires filament groups to be configured in
+OpenAMS. You may still define groups within your OpenAMS configuration if you
+prefer. Assign runout lanes either via the Klipper console command
+`SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC panel in
+Mainsail.
+
 To enable the optional Mainsail AFC panel, extract the included `mainsail.zip`
 archive into your Mainsail installation directory. Before extracting, back up
 and remove the existing contents of that directory to ensure the new panel
