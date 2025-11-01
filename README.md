@@ -9,7 +9,7 @@ Install OpenAMS using the provided script:
 
 ```bash  
 cd ~  
-git clone https://github.com/OpenAMSOrg/klipper_openams.git  
+git clone https://github.com/lindnjoe/klipper_openams.git  
 cd klipper_openams  
 ./install-openams.sh  
 ```  
