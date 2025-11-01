@@ -52,9 +52,11 @@ Load spools into the AMS only after that first boot finishes.
 
 Infinite spooling no longer requires filament groups to be configured in
 OpenAMS. You may still define groups within your OpenAMS configuration if you
-prefer. Assign runout lanes either via the Klipper console command
-`SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC panel in
-Mainsail.
+prefer. OpenAMS now manages all runout handling for AMS lanes, including
+infinite spooling between lanes on the same extruder, and falls back to the AFC
+logic for any remaining scenarios. Assign runout lanes either via the Klipper
+console command `SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC
+panel in Mainsail.
 
 To enable the optional Mainsail AFC panel, extract the included `mainsail.zip`
 archive into your Mainsail installation directory. Before extracting, back up
