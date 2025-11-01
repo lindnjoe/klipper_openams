@@ -35,8 +35,10 @@ installation completes, delete the generated `AFC_Turtle_1.cfg` file from the
 `printer_data/config/AFC/` directory to avoid conflicts with the OpenAMS
 configuration.
 
-After installing the add-on, copy the provided `AFC_AMS1.cfg` file into the
-Klipper configuration directory so that it can be included by your printer
+For best results, perform the installation while your OpenAMS unit is empty so
+that the AFC installer can update its system files without interruption. After
+installing the add-on, copy the provided `AFC_AMS1.cfg` file into the Klipper
+configuration directory so that it can be included by your printer
 configuration:
 
 ```bash
@@ -44,7 +46,9 @@ cp AFC_AMS1.cfg <printer_data path>/config/AFC/
 ```
 
 If you used the default installation layout, the destination path will be
-`~/printer_data/config/AFC/`.
+`~/printer_data/config/AFC/`. Once all file operations are complete, reboot the
+host running Klipper to ensure the AFC services reload with the new files.
+Load spools into the AMS only after that first boot finishes.
 
 Infinite spooling no longer requires filament groups to be configured in
 OpenAMS. You may still define groups within your OpenAMS configuration if you
