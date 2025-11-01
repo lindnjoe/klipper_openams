@@ -40,6 +40,11 @@ cp AFC_AMS1.cfg <printer_data path>/config/AFC/
 If you used the default installation layout, the destination path will be
 `~/printer_data/config/AFC/`.
 
+To enable the optional Mainsail AFC panel, extract the included `mainsail.zip`
+archive into your Mainsail installation directory. Before extracting, back up
+and remove the existing contents of that directory to ensure the new panel
+files replace the previous version cleanly.
+
 ## Credits  
 
 This project was made by knight.rad_iant on Discord.
