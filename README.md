@@ -50,6 +50,13 @@ If you used the default installation layout, the destination path will be
 host running Klipper to ensure the AFC services reload with the new files.
 Load spools into the AMS only after that first boot finishes.
 
+After installation, update the AFC hardware configuration to ensure the tool
+sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set
+`pin_tool_start:` within the `[AFC_extruder extruder]` section. Use
+`pin_tool_start: AMS_extruder` when the filament presence sensor (FPS) handles
+tool sensing with ramming enabled; otherwise, set the value to the toolhead
+filament sensor pin that matches your printer's wiring.
+
 Infinite spooling no longer requires filament groups to be configured in
 OpenAMS. You may still define groups within your OpenAMS configuration if you
 prefer. OpenAMS now manages all runout handling for AMS lanes, including
