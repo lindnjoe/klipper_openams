@@ -29,6 +29,12 @@ the `multi_extruder` branch using the project's installation script:
 ./install-afc.sh -b multi_extruder
 ```
 
+The installer does not yet list an OpenAMS-specific unit type; when prompted,
+choose the **Box Turtle** option and accept the default settings. Once the
+installation completes, delete the generated `AFC_Turtle_1.cfg` file from the
+`printer_data/config/AFC/` directory to avoid conflicts with the OpenAMS
+configuration.
+
 After installing the add-on, copy the provided `AFC_AMS1.cfg` file into the
 Klipper configuration directory so that it can be included by your printer
 configuration:
