@@ -47,8 +47,7 @@ cp AFC_oamsc.cfg <printer_data path>/config/AFC/
 cp AFC_oams_macros.cfg <printer_data path>/config/AFC/
 ```
 
-Edit each file to match your specific hardware setup—at a minimum, confirm that
-tool numbers, stepper assignments, and sensor pins reflect your installation.
+Edit each file to match your specific hardware setup.
 
 If you used the default installation layout, the destination path will be
 `~/printer_data/config/AFC/`. Once all file operations are complete, reboot the
