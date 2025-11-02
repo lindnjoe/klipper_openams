@@ -37,13 +37,18 @@ configuration.
 
 For best results, perform the installation while your OpenAMS unit is empty so
 that the AFC installer can update its system files without interruption. After
-installing the add-on, copy the provided `AFC_AMS1.cfg` file into the Klipper
-configuration directory so that it can be included by your printer
-configuration:
+installing the add-on, copy the provided `AFC_AMS1.cfg`, `AFC_oamsc.cfg`, and
+`AFC_oams_macros.cfg` files into the Klipper configuration directory so that
+they can be included by your printer configuration:
 
 ```bash
 cp AFC_AMS1.cfg <printer_data path>/config/AFC/
+cp AFC_oamsc.cfg <printer_data path>/config/AFC/
+cp AFC_oams_macros.cfg <printer_data path>/config/AFC/
 ```
+
+Edit each file to match your specific hardware setup—at a minimum, confirm that
+tool numbers, stepper assignments, and sensor pins reflect your installation.
 
 If you used the default installation layout, the destination path will be
 `~/printer_data/config/AFC/`. Once all file operations are complete, reboot the
