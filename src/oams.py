@@ -1,4 +1,4 @@
-# OpenAMS Mainboard
+# OpenAMS Mainboard 
 #
 # Copyright (C) 2025 JR Lomas <lomas.jr@gmail.com>
 #
@@ -15,27 +15,31 @@ try:  # pragma: no cover - optional dependency during unit tests
 except Exception:  # pragma: no cover - best-effort integration only
     AMSHardwareService = None
 
+# Pre-compiled struct formats for float conversions 
+_FLOAT_STRUCT = struct.Struct("f")
+_U32_STRUCT = struct.Struct("I")
+
 # OAMS Hardware Status Constants
 class OAMSStatus:
     """Hardware status codes reported by OAMS firmware."""
-    LOADING = 0              # Currently loading filament
-    UNLOADING = 1            # Currently unloading filament  
-    FORWARD_FOLLOWING = 2    # Following extruder in forward direction
-    REVERSE_FOLLOWING = 3    # Following extruder in reverse direction
-    COASTING = 4             # Coasting without active control
-    STOPPED = 5              # Motor stopped, idle state
-    CALIBRATING = 6          # Running calibration procedure
-    ERROR = 7                # Error state requiring intervention
+    LOADING = 0
+    UNLOADING = 1
+    FORWARD_FOLLOWING = 2
+    REVERSE_FOLLOWING = 3
+    COASTING = 4
+    STOPPED = 5
+    CALIBRATING = 6
+    ERROR = 7
 
 # OAMS Operation Result Codes  
 class OAMSOpCode:
     """Operation result codes from OAMS firmware."""
-    SUCCESS = 0                    # Operation completed successfully
-    ERROR_UNSPECIFIED = 1         # Generic error occurred
-    ERROR_BUSY = 2                # OAMS busy with another operation
-    SPOOL_ALREADY_IN_BAY = 3      # Attempted to load when bay occupied
-    NO_SPOOL_IN_BAY = 4           # Attempted to unload empty bay
-    ERROR_KLIPPER_CALL = 5        # Error in Klipper communication
+    SUCCESS = 0
+    ERROR_UNSPECIFIED = 1
+    ERROR_BUSY = 2
+    SPOOL_ALREADY_IN_BAY = 3
+    NO_SPOOL_IN_BAY = 4
+    ERROR_KLIPPER_CALL = 5
 
 
 class OAMS:
@@ -69,9 +73,9 @@ class OAMS:
         self.fps_is_reversed: bool = config.getboolean("fps_is_reversed")
         
         # Current state variables
-        self.current_spool: Optional[int] = None  # Currently loaded spool index (0-3)
-        self.encoder_clicks: int = 0  # Current encoder position
-        self.i_value: float = 0.0  # Current sensor value
+        self.current_spool: Optional[int] = None
+        self.encoder_clicks: int = 0
+        self.i_value: float = 0.0
         
         # Sensor configuration - Hall Effect Sensor thresholds
         self.f1s_hes_on: List[float] = list(
@@ -111,9 +115,9 @@ class OAMS:
         )
         
         # Hardware state arrays (updated by firmware)
-        self.fps_value: float = 0  # Current pressure reading
-        self.f1s_hes_value: List[int] = [0, 0, 0, 0]  # Filament sensors [bay0, bay1, bay2, bay3]
-        self.hub_hes_value: List[int] = [0, 0, 0, 0]  # Hub sensors [bay0, bay1, bay2, bay3]
+        self.fps_value: float = 0
+        self.f1s_hes_value: List[int] = [0, 0, 0, 0]
+        self.hub_hes_value: List[int] = [0, 0, 0, 0]
         
         # Action status tracking
         self.action_status: Optional[int] = None
@@ -130,7 +134,7 @@ class OAMS:
         self.name = config.get_name()
         self.register_commands(self.name.split()[-1])
 
-        # Expose the underlying hardware controller to AFC when available.
+        # Expose the underlying hardware controller to AFC when available
         if AMSHardwareService is not None:
             try:
                 service = AMSHardwareService.for_printer(
@@ -153,11 +157,11 @@ class OAMS:
         }
     
     def is_bay_ready(self, bay_index: int) -> bool:
-        """Check if a spool bay has filament ready to load (filament sensor active)."""
+        """Check if a spool bay has filament ready to load."""
         return bool(self.f1s_hes_value[bay_index])
     
     def is_bay_loaded(self, bay_index: int) -> bool:
-        """Check if a spool bay has filament loaded into the hub (hub sensor active)."""
+        """Check if a spool bay has filament loaded into the hub."""
         return bool(self.hub_hes_value[bay_index])
     
     def stats(self, eventtime):
@@ -186,38 +190,26 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         )
 
     def handle_connect(self):
+        """Initialize MCU commands """
+        # Define all commands in a structured way
+        command_defs = {
+            'load_spool': "oams_cmd_load_spool spool=%c",
+            'unload_spool': "oams_cmd_unload_spool",
+            'follower': "oams_cmd_follower enable=%c direction=%c",
+            'calibrate_ptfe_length': "oams_cmd_calibrate_ptfe_length spool=%c",
+            'calibrate_hub_hes': "oams_cmd_calibrate_hub_hes spool=%c",
+            'pid': "oams_cmd_pid kp=%u ki=%u kd=%u target=%u",
+            'set_led_error': "oams_set_led_error idx=%c value=%c",
+        }
+        
         try:
-            self.oams_load_spool_cmd = self.mcu.lookup_command(
-                "oams_cmd_load_spool spool=%c"
-            )
-
-            self.oams_unload_spool_cmd = self.mcu.lookup_command(
-                "oams_cmd_unload_spool"
-            )
-
-            self.oams_follower_cmd = self.mcu.lookup_command(
-                "oams_cmd_follower enable=%c direction=%c"
-            )
-
-            self.oams_calibrate_ptfe_length_cmd = self.mcu.lookup_command(
-                "oams_cmd_calibrate_ptfe_length spool=%c"
-            )
-
-            self.oams_calibrate_hub_hes_cmd = self.mcu.lookup_command(
-                "oams_cmd_calibrate_hub_hes spool=%c"
-            )
-
-            self.oams_pid_cmd = self.mcu.lookup_command(
-                "oams_cmd_pid kp=%u ki=%u kd=%u target=%u"
-            )
-            # TODO: change this to reset the state of the AMS and determine it again instead
-            #       of directly doing it via klipper, let the firmware handle it
-            self.oams_set_led_error_cmd = self.mcu.lookup_command(
-                "oams_set_led_error idx=%c value=%c"
-            )
-
+            # Batch command lookup 
+            for cmd_name, cmd_string in command_defs.items():
+                cmd_obj = self.mcu.lookup_command(cmd_string)
+                setattr(self, f'oams_{cmd_name}_cmd', cmd_obj)
+            
+            # Query command with dedicated queue
             cmd_queue = self.mcu.alloc_command_queue()
-
             self.oams_spool_query_spool_cmd = self.mcu.lookup_query_command(
                 "oams_cmd_query_spool",
                 "oams_query_response_spool spool=%u",
@@ -236,91 +228,41 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         for i in range(4):
             self.set_led_error(i, 0)
         self.current_spool = self.determine_current_spool()
-        self.determine_current_spool()
             
     def set_led_error(self, idx, value):
-        logging.info("Setting LED %d to %d", idx, value)
+        if logging.getLogger(__name__).isEnabledFor(logging.DEBUG):
+            logging.debug("Setting LED %d to %d", idx, value)
         self.oams_set_led_error_cmd.send([idx, value])
-        # TODO: need to restore the actual value of the LED when resetting the error
         
-            
     def determine_current_spool(self):
         params = self.oams_spool_query_spool_cmd.send()
         if params is not None and "spool" in params:
-            if params["spool"] >= 0 and params["spool"] <= 3:
-                return params["spool"]
+            spool_val = params["spool"]
+            if 0 <= spool_val <= 3:
+                return spool_val
         return None
         
 
     def register_commands(self, name):
         id = str(self.oams_idx)
-        # Register commands
         gcode = self.printer.lookup_object("gcode")
-        gcode.register_mux_command(
-            "OAMS_LOAD_SPOOL",
-            "OAMS",
-            id,
-            self.cmd_OAMS_LOAD_SPOOL,
-            desc=self.cmd_OAMS_LOAD_SPOOL_help,
-        )
-        gcode.register_mux_command(
-            "OAMS_UNLOAD_SPOOL",
-            "OAMS",
-            id,
-            self.cmd_OAMS_UNLOAD_SPOOL,
-            self.cmd_OAMS_UNLOAD_SPOOL_help,
-        )
-
-        gcode.register_mux_command(
-            "OAMS_FOLLOWER",
-            "OAMS",
-            id,
-            self.cmd_OAMS_FOLLOWER,
-            self.cmd_OAMS_FOLLOWER_help,
-        )
-
-        gcode.register_mux_command(
-            "OAMS_CALIBRATE_PTFE_LENGTH",
-            "OAMS",
-            id,
-            self.cmd_OAMS_CALIBRATE_PTFE_LENGTH,
-            self.cmd_OAMS_CALIBRATE_PTFE_LENGTH_help,
-        )
-
-        gcode.register_mux_command(
-            "OAMS_CALIBRATE_HUB_HES",
-            "OAMS",
-            id,
-            self.cmd_OAMS_CALIBRATE_HUB_HES,
-            self.cmd_OAMS_CALIBRATE_HUB_HES_help,
-        )
-
-        gcode.register_mux_command(
-            "OAMS_PID_AUTOTUNE",
-            "OAMS",
-            id,
-            self.cmd_OAMS_PID_AUTOTUNE,
-            self.cmd_OAMS_PID_AUTOTUNE_help,
-        )
-
-        gcode.register_mux_command(
-            "OAMS_PID_SET",
-            "OAMS",
-            id,
-            self.cmd_OAMS_PID_SET,
-            self.cmd_OAMS_PID_SET_help,
-        )
-
-        gcode.register_mux_command(
-            "OAMS_CURRENT_PID_SET",
-            "OAMS",
-            id,
-            self.cmd_OAMS_CURRENT_PID_SET,
-            self.cmd_OAMS_CURRENT_PID_SET_help,
-        )
+        
+        # Register all mux commands
+        commands = [
+            ("OAMS_LOAD_SPOOL", self.cmd_OAMS_LOAD_SPOOL, self.cmd_OAMS_LOAD_SPOOL_help),
+            ("OAMS_UNLOAD_SPOOL", self.cmd_OAMS_UNLOAD_SPOOL, self.cmd_OAMS_UNLOAD_SPOOL_help),
+            ("OAMS_FOLLOWER", self.cmd_OAMS_FOLLOWER, self.cmd_OAMS_FOLLOWER_help),
+            ("OAMS_CALIBRATE_PTFE_LENGTH", self.cmd_OAMS_CALIBRATE_PTFE_LENGTH, self.cmd_OAMS_CALIBRATE_PTFE_LENGTH_help),
+            ("OAMS_CALIBRATE_HUB_HES", self.cmd_OAMS_CALIBRATE_HUB_HES, self.cmd_OAMS_CALIBRATE_HUB_HES_help),
+            ("OAMS_PID_AUTOTUNE", self.cmd_OAMS_PID_AUTOTUNE, self.cmd_OAMS_PID_AUTOTUNE_help),
+            ("OAMS_PID_SET", self.cmd_OAMS_PID_SET, self.cmd_OAMS_PID_SET_help),
+            ("OAMS_CURRENT_PID_SET", self.cmd_OAMS_CURRENT_PID_SET, self.cmd_OAMS_CURRENT_PID_SET_help),
+        ]
+        
+        for cmd_name, handler, help_text in commands:
+            gcode.register_mux_command(cmd_name, "OAMS", id, handler, desc=help_text)
 
     cmd_OAMS_CURRENT_PID_SET_help = "Set the PID values for the current sensor"
-
     def cmd_OAMS_CURRENT_PID_SET(self, gcmd):
         p = gcmd.get_float("P", None)
         i = gcmd.get_float("I", None)
@@ -348,7 +290,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         )
 
     cmd_OAMS_PID_SET_help = "Set the PID values for the OAMS"
-
     def cmd_OAMS_PID_SET(self, gcmd):
         p = gcmd.get_float("P", None)
         i = gcmd.get_float("I", None)
@@ -373,9 +314,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self.fps_target = t
         gcmd.respond_info("PID values set to P=%f I=%f D=%f TARGET=%f" % (p, i, d, t))
 
-    # TODO: Implement this completely
     cmd_OAMS_PID_AUTOTUNE_help = "Run PID autotune"
-
     def cmd_OAMS_PID_AUTOTUNE(self, gcmd):
         target_flow = gcmd.get_float("TARGET_FLOW", None)
         target_temp = gcmd.get_float("TARGET_TEMP", None)
@@ -385,22 +324,14 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         if target_temp is None:
             raise gcmd.error("TARGET temperature in degrees C is required")
 
-        # Given a flowrate we will calculate 30 seconds of a G1 E command
-        extrusion_speed_per_min = (
-            60 * target_flow / (pi * (1.75 / 2) ** 2)
-        )  # this is the G1 F parameter
-        extrusion_length = (
-            extrusion_speed_per_min / 60 * 30
-        )  # this is the G1 E parameter
+        extrusion_speed_per_min = (60 * target_flow / (pi * (1.75 / 2) ** 2))
+        extrusion_length = (extrusion_speed_per_min / 60 * 30)
 
         gcode = self.printer.lookup_object("gcode")
-
-        # turn on extruder heater and wait for it to stabilize
         gcode.send("M104 S%f" % target_temp)
         gcode.send("G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min))
 
     cmd_OAMS_CALIBRATE_HUB_HES_help = "Calibrate the range of a single hub HES"
-
     def cmd_OAMS_CALIBRATE_HUB_HES(self, gcmd):
         self.action_status = OAMSStatus.CALIBRATING
         spool_idx = gcmd.get_int("SPOOL", None)
@@ -423,7 +354,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             gcmd.error("Calibration of HES %d failed" % spool_idx)
 
     cmd_OAMS_CALIBRATE_PTFE_LENGTH_help = "Calibrate the length of the PTFE tube"
-
     def cmd_OAMS_CALIBRATE_PTFE_LENGTH(self, gcmd):
         self.action_status = OAMSStatus.CALIBRATING
         spool = gcmd.get_int("SPOOL", None)
@@ -456,7 +386,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             return False, "Unknown error from OAMS with code %d" % self.action_status_code
 
     cmd_OAMS_LOAD_SPOOL_help = "Load a new spool of filament"
-
     def cmd_OAMS_LOAD_SPOOL(self, gcmd):
         self.action_status = OAMSStatus.LOADING
         self.oams_spool_query_spool_cmd.send()
@@ -489,7 +418,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             return False, "Unknown error from OAMS"
 
     cmd_OAMS_UNLOAD_SPOOL_help = "Unload a spool of filament"
-
     def cmd_OAMS_UNLOAD_SPOOL(self, gcmd):
         success, message = self.unload_spool()
         if success:
@@ -502,7 +430,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
     def abort_current_action(self, code: int = OAMSOpCode.ERROR_KLIPPER_CALL) -> None:
         """Abort any in-flight hardware action initiated by Klipper helpers."""
-
         if self.action_status is None:
             return
 
@@ -517,7 +444,6 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self.action_status = None
 
     cmd_OAMS_FOLLOWER_help = "Enable or disable follower and set its direction"
-
     def cmd_OAMS_FOLLOWER(self, gcmd):
         enable = gcmd.get_int("ENABLE", None)
         if enable is None:
@@ -552,35 +478,36 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         return self.i_value
 
     def _oams_action_status(self, params):
-        logging.info("oams status received")
-        if params["action"] == OAMSStatus.LOADING:
+        if logging.getLogger(__name__).isEnabledFor(logging.DEBUG):
+            logging.debug("OAMS status received")
+        
+        action = params["action"]
+        code = params["code"]
+        
+        if action in (OAMSStatus.LOADING, OAMSStatus.UNLOADING, OAMSStatus.ERROR):
             self.action_status = None
-            self.action_status_code = params["code"]
-        elif params["action"] == OAMSStatus.UNLOADING:
+            self.action_status_code = code
+        elif action == OAMSStatus.CALIBRATING:
             self.action_status = None
-            self.action_status_code = params["code"]
-        elif params["action"] == OAMSStatus.CALIBRATING:
-            self.action_status = None
-            self.action_status_code = params["code"]
+            self.action_status_code = code
             self.action_status_value = params["value"]
-        elif params["action"] == OAMSStatus.ERROR:
+        elif code == OAMSOpCode.ERROR_KLIPPER_CALL:
             self.action_status = None
-            self.action_status_code = params["code"]
-        elif params["code"] == OAMSOpCode.ERROR_KLIPPER_CALL:
-            self.action_status = None
-            self.action_status_code = params["code"]
+            self.action_status_code = code
         else:
             logging.error(
                 "Spurious response from AMS with code %d and action %d",
-                params["code"],
-                params["action"],
+                code,
+                action,
             )
 
-    def float_to_u32(self, f):
-        return struct.unpack("I", struct.pack("f", f))[0]
+    def float_to_u32(self, f: float) -> int:
+        """Convert float to u32 using pre-compiled struct"""
+        return _U32_STRUCT.unpack(_FLOAT_STRUCT.pack(f))[0]
 
-    def u32_to_float(self, i):
-        return struct.unpack("f", struct.pack("I", i))[0]
+    def u32_to_float(self, i: int) -> float:
+        """Convert u32 to float using pre-compiled struct"""
+        return _FLOAT_STRUCT.unpack(_U32_STRUCT.pack(i))[0]
 
     def _build_config(self):
         self.mcu.add_config_cmd(
@@ -643,7 +570,3 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
-
-
-
-
