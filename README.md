@@ -109,7 +109,7 @@ If you used the default installation layout, the destination path will be `~/pri
 
 After installation, update the AFC hardware configuration to ensure the tool sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set `pin_tool_start:` within the `[AFC_extruder extruder]` section. Use `pin_tool_start: AMS_extruder` when the filament pressure sensor (FPS) handles filament sensing with ramming; otherwise, set the value to the toolhead filament sensor pin that matches your printer's wiring.
 
-Infinite spooling no longer requires filament groups to be configured in OpenAMS. You may still define groups within your OpenAMS configuration if you prefer. OpenAMS now manages all runout handling for AMS lanes, including infinite spooling between lanes on the same extruder, and falls back to the AFC logic for any remaining scenarios. Assign runout lanes either via the Klipper console command `SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC panel in Mainsail.
+Infinite spooling no longer requires filament groups to be configured in OpenAMS. You may still define groups within your OpenAMS configuration if you prefer. OpenAMS now manages all runout handling for AMS lanes, including infinite spooling between lanes on the same extruder/FPS, and falls back to the AFC logic for any remaining scenarios. Assign runout lanes either via the Klipper console command `SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC panel in Mainsail.
 
 To enable the optional Mainsail AFC panel, extract the included `mainsail.zip` archive into your Mainsail installation directory. Before extracting, back up and remove the existing contents of that directory to ensure the new panel files replace the previous version cleanly.
 
