@@ -1,6 +1,5 @@
 *** Copy the AFC_OpenAMS.py and openams_integration.py that are included to the ~/Klipper-Add-On/extras folder. This won't be necessary once a recent PR is accepted. I will delete this when that is done.***
 
-
 Install OpenAMS using the provided script:
 
 ```bash
@@ -25,6 +24,13 @@ OpenAMS Manager Settings
 
 # Optional: Clog detection sensitivity: low, medium, high (default: medium)
 #clog_sensitivity: medium
+```
+
+Example configuration with clog detection enabled:
+```ini
+[oams_manager]
+reload_before_toolhead_distance: 50.0  # Trigger reload 50mm before toolhead
+clog_sensitivity: medium                # Balanced clog detection
 ```
 
 OAMS Hardware Settings
