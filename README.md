@@ -86,7 +86,7 @@ The `clog_sensitivity` setting in `[oams_manager]` controls how aggressive the c
 - **high**: Shorter observation window (12mm extrusion), more sensitive
 
 ## Integrating with Armored Turtle's AFC Add-on
-
+https://github.com/ArmoredTurtle/AFC-Klipper-Add-On
 To integrate OpenAMS with the **Armored Turtle AFC Klipper add-on**, install the add-on from the `multi_extruder` branch using the project's installation script:
 
 ```bash
