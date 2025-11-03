@@ -23,7 +23,6 @@ If your directory structure differs, you can configure the installation script w
 
 ### OpenAMS Manager Settings
 
-Add the following section to your printer configuration file (typically `printer.cfg`):
 
 ```ini
 [oams_manager]
