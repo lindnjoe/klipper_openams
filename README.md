@@ -1,3 +1,5 @@
+*** Copy the AFC_OpenAMS.py and openams_integration.py that are included to the ~/Klipper-Add-On/extras folder. This won't be necessary once a recent PR is accepted. I will delete this when that is done.***
+
 
 Install OpenAMS using the provided script:
 
