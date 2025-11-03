@@ -96,9 +96,11 @@ cp AFC_oams_macros.cfg <printer_data path>/config/AFC/
 
 Edit each file to match your specific hardware setup.
 
-If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`. Once all file operations are complete, reboot the host running Klipper to ensure the AFC services reload with the new files. Load spools into the AMS only after that first boot finishes.
+If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`. 
 
-After installation, update the AFC hardware configuration to ensure the tool sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set `pin_tool_start:` within the `[AFC_extruder extruder]` section. Use `pin_tool_start: AMS_extruder` when the filament pressure sensor (FPS) handles filament sensing with ramming; otherwise, set the value to the toolhead filament sensor pin that matches your printer's wiring.
+Before rebooting, update the AFC hardware configuration to ensure the tool sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set `pin_tool_start:` within the `[AFC_extruder extruder]` section. Use `pin_tool_start: AMS_extruder` when the filament pressure sensor (FPS) handles filament sensing with ramming; otherwise, set the value to the toolhead filament sensor pin that matches your printer's wiring.
+
+Once all file operations and configuration edits are complete, reboot the host running Klipper to ensure the AFC services reload with the new files. Load spools into the AMS only after that first boot finishes.
 
 Infinite spooling no longer requires filament groups to be configured in OpenAMS. You may still define groups within your OpenAMS configuration if you prefer. OpenAMS now manages all runout handling for AMS lanes, including infinite spooling between lanes on the same extruder/FPS, and falls back to the AFC logic for any remaining scenarios. Assign runout lanes either via the Klipper console command `SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC panel in Mainsail.
 
