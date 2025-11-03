@@ -1,16 +1,15 @@
-# OpenAMS for Klipper
+OpenAMS for Klipper
 OpenAMS Klipper Plugin
 
-## Installation
-
-### Automatic Installation
+Installation
+Automatic Installation
 Install OpenAMS using the provided script:
 
 ```bash
 cd ~  
 git clone https://github.com/lindnjoe/klipper_openams.git  
 cd klipper_openams  
-./install-openams.sh  
+./install-openams.sh
 ```
 
 If your directory structure differs, you can configure the installation script with additional parameters:
@@ -19,11 +18,30 @@ If your directory structure differs, you can configure the installation script w
 ./install-openams.sh [-k <klipper path>] [-s <klipper service name>] [-c <configuration path>]
 ```
 
-## Configuration
+Initial Calibration
+After installation and your first boot, calibrate each OpenAMS unit to ensure accurate filament detection and optimal performance:
 
-### OpenAMS Manager Settings
+1. Run the calibration command via the Klipper console:
+   ```
+   AFC_CALIBRATION
+   ```
 
+2. When prompted, select your OpenAMS unit from the list
 
+3. The calibration process will automatically:
+   - Measure PTFE tube lengths for each lane
+   - Calibrate HUB_HES sensor values
+   - Store the configuration values in your config file
+
+4. Once calibration completes, restart Klipper to load the new settings:
+   ```
+   FIRMWARE_RESTART
+   ```
+
+Repeat this process for each OpenAMS unit in your system. Proper calibration ensures reliable lane detection and prevents loading errors during multi-material prints.
+
+Configuration
+OpenAMS Manager Settings
 ```ini
 [oams_manager]
 # Optional: Distance before toolhead to trigger reload during runout (default: 0.0)
@@ -33,8 +51,7 @@ If your directory structure differs, you can configure the installation script w
 #clog_sensitivity: medium
 ```
 
-### OAMS Hardware Settings
-
+OAMS Hardware Settings
 For each OAMS unit, configure the retry behavior in your OAMS hardware configuration file:
 
 ```ini
@@ -52,8 +69,7 @@ For each OAMS unit, configure the retry behavior in your OAMS hardware configura
 #retry_delay_base: 1.0
 ```
 
-### Retry Behavior
-
+Retry Behavior
 The OpenAMS system includes automatic retry logic for both load and unload operations:
 
 **Load Retries:**
@@ -68,7 +84,8 @@ The OpenAMS system includes automatic retry logic for both load and unload opera
 - Aborts stuck operations and retries automatically
 - Only pauses the printer if all retry attempts fail
 
-**Example Configuration:**
+Example Configuration:
+
 ```ini
 [oams oams_1]
 # ... connection settings ...
@@ -77,17 +94,17 @@ unload_retry_max: 2      # Try unloading up to 2 times
 retry_delay_base: 1.0    # Wait 1s, 2s, 4s between attempts
 ```
 
-### Clog Detection Settings
-
+Clog Detection Settings
 The `clog_sensitivity` setting in `[oams_manager]` controls how aggressive the clog detection is:
 
 - **low**: Longer observation window (48mm extrusion), more tolerant
 - **medium** (default): Balanced settings (24mm extrusion)
 - **high**: Shorter observation window (12mm extrusion), more sensitive
 
-## Integrating with Armored Turtle's AFC Add-on
+Integrating with Armored Turtle's AFC Add-on
 https://github.com/ArmoredTurtle/AFC-Klipper-Add-On
-To integrate OpenAMS with the **Armored Turtle AFC Klipper add-on**, install the add-on from the `multi_extruder` branch using the project's installation script:
+
+To integrate OpenAMS with the Armored Turtle AFC Klipper add-on, install the add-on from the multi_extruder branch using the project's installation script:
 
 ```bash
 ./install-afc.sh -b multi_extruder
@@ -113,18 +130,16 @@ Infinite spooling no longer requires filament groups to be configured in OpenAMS
 
 To enable the optional Mainsail AFC panel, extract the included `mainsail.zip` archive into your Mainsail installation directory. Before extracting, back up and remove the existing contents of that directory to ensure the new panel files replace the previous version cleanly.
 
-## Troubleshooting
-
-### Stuck Spool Detection
-
+Troubleshooting
+Stuck Spool Detection
 If you experience issues with stuck spool detection during load or unload operations:
 
-1. **Check retry counts**: Verify your `load_retry_max` and `unload_retry_max` settings are appropriate (defaults: 3 and 2)
-2. **Adjust retry delays**: Increase `retry_delay_base` if your hardware needs more time between attempts
-3. **Monitor logs**: Look for messages like "letting retry logic handle it" and "retry X/Y" to confirm retries are working
-4. **Verify encoder**: Ensure your OAMS encoder is clean and functioning properly
+- **Check retry counts**: Verify your `load_retry_max` and `unload_retry_max` settings are appropriate (defaults: 3 and 2)
+- **Adjust retry delays**: Increase `retry_delay_base` if your hardware needs more time between attempts
+- **Monitor logs**: Look for messages like "letting retry logic handle it" and "retry X/Y" to confirm retries are working
+- **Verify encoder**: Ensure your OAMS encoder is clean and functioning properly
 
 The system will automatically retry stuck operations before pausing. Only after all retry attempts are exhausted will the printer pause and require manual intervention.
 
-## Credits
-This project was made by knight.rad_iant on Discord.
+Credits
+This project was made by knight.rad_iant on Discord
