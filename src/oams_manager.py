@@ -1222,7 +1222,6 @@ class OAMSManager:
         if encoder_diff < MIN_ENCODER_DIFF:
             group_label = fps_state.current_group or fps_name
             spool_label = str(fps_state.current_spool_idx) if fps_state.current_spool_idx is not None else "unknown"
-            message = f"Spool appears stuck while unloading {group_label} spool {spool_label}"
             
             # Abort the current unload operation cleanly
             try:
@@ -1231,12 +1230,22 @@ class OAMSManager:
             except Exception:
                 self.logger.exception("Failed to abort unload operation on %s", fps_name)
             
+            # Set LED error
+            try:
+                oams.set_led_error(fps_state.current_spool_idx, 1)
+            except Exception:
+                self.logger.exception("Failed to set LED during unload stuck detection on %s", fps_name)
+            
             # Transition to LOADED state cleanly (unload failed, so still loaded)
             fps_state.state = FPSLoadState.LOADED
             fps_state.clear_encoder_samples()
             
-            # Trigger the pause but DON'T stop monitors - let them keep running
-            self._trigger_stuck_spool_pause(fps_name, fps_state, oams, message)
+            # Set the stuck flag but DON'T pause - let the OAMS retry logic handle it
+            # The retry logic will clear this flag if the retry succeeds
+            fps_state.stuck_spool_active = True
+            fps_state.stuck_spool_start_time = None
+            
+            self.logger.info("Spool appears stuck while unloading %s spool %s - letting retry logic handle it", group_label, spool_label)
 
     def _check_load_speed(self, fps_name, fps_state, oams, encoder_value, now):
         """Check load speed using optimized encoder tracking."""
@@ -1539,3 +1548,5 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
+
+
