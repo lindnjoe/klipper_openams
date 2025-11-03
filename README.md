@@ -14,28 +14,6 @@ If your directory structure differs, you can configure the installation script w
 ./install-openams.sh [-k <klipper path>] [-s <klipper service name>] [-c <configuration path>]
 ```
 
-Initial Calibration
-After installation and your first boot, calibrate each OpenAMS unit to ensure accurate filament detection and optimal performance:
-
-1. Run the calibration command via the Klipper console:
-   ```
-   AFC_CALIBRATION
-   ```
-
-2. When prompted, select your OpenAMS unit from the list
-
-3. The calibration process will automatically:
-   - Measure PTFE tube lengths for each lane
-   - Calibrate HUB_HES sensor values
-   - Store the configuration values in your config file
-
-4. Once calibration completes, restart Klipper to load the new settings:
-   ```
-   FIRMWARE_RESTART
-   ```
-
-Repeat this process for each OpenAMS unit in your system. Proper calibration ensures reliable lane detection and prevents loading errors during multi-material prints.
-
 Configuration
 OpenAMS Manager Settings
 ```ini
@@ -125,6 +103,28 @@ After installation, update the AFC hardware configuration to ensure the tool sen
 Infinite spooling no longer requires filament groups to be configured in OpenAMS. You may still define groups within your OpenAMS configuration if you prefer. OpenAMS now manages all runout handling for AMS lanes, including infinite spooling between lanes on the same extruder/FPS, and falls back to the AFC logic for any remaining scenarios. Assign runout lanes either via the Klipper console command `SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>` or through the AFC panel in Mainsail.
 
 To enable the optional Mainsail AFC panel, extract the included `mainsail.zip` archive into your Mainsail installation directory. Before extracting, back up and remove the existing contents of that directory to ensure the new panel files replace the previous version cleanly.
+
+Initial Calibration
+After completing the OpenAMS and AFC installation, calibrate each OpenAMS unit to ensure accurate filament detection and optimal performance. The AFC system provides the calibration tools needed for this process.
+
+1. Run the calibration command via the Klipper console:
+   ```
+   AFC_CALIBRATION
+   ```
+
+2. When prompted, select your OpenAMS unit from the list
+
+3. The calibration process will automatically:
+   - Measure PTFE tube lengths for each lane
+   - Calibrate HUB_HES sensor values
+   - Store the configuration values in your config file
+
+4. Once calibration completes, restart Klipper to load the new settings:
+   ```
+   FIRMWARE_RESTART
+   ```
+
+Repeat this process for each OpenAMS unit in your system. Proper calibration ensures reliable lane detection and prevents loading errors during multi-material prints.
 
 Troubleshooting
 Stuck Spool Detection
