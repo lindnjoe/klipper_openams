@@ -1,5 +1,4 @@
-Installation
-Automatic Installation
+
 Install OpenAMS using the provided script:
 
 ```bash
