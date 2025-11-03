@@ -49,9 +49,8 @@ class OAMSRunoutState:
     PAUSED = "PAUSED"
 
 
-#  Use integer states instead of strings for faster comparisons
 class FPSLoadState:
-    """Enum for FPS loading states """
+    """Enum for FPS loading states"""
     UNLOADED = 0
     LOADED = 1
     LOADING = 2
@@ -148,7 +147,6 @@ class OAMSRunoutMonitor:
 
                 self.latest_lane_name = lane_name
 
-                #  Use integer state comparison
                 if (is_printing and fps_state.state == FPSLoadState.LOADED and 
                     fps_state.current_group is not None and fps_state.current_spool_idx is not None and spool_empty):
                     self.state = OAMSRunoutState.DETECTED
@@ -230,7 +228,7 @@ class OAMSState:
         
 
 class FPSState:
-    """Tracks the state of a single FPS """
+    """Tracks the state of a single FPS"""
     
     def __init__(self, 
                  state: int = FPSLoadState.UNLOADED,
@@ -238,7 +236,6 @@ class FPSState:
                  current_oams: Optional[str] = None, 
                  current_spool_idx: Optional[int] = None):
         
-        #  Use integer state
         self.state = state
         self.current_group = current_group
         self.current_oams = current_oams
@@ -251,7 +248,6 @@ class FPSState:
         self.monitor_pause_timer = None
         self.monitor_load_next_spool_timer = None
         
-        # OPTIMIZATION: Simple variables instead of deque for 2-element tracking
         self.encoder_sample_prev: Optional[int] = None
         self.encoder_sample_current: Optional[int] = None
 
@@ -278,7 +274,6 @@ class FPSState:
         self.post_load_pressure_timer = None
         self.post_load_pressure_start: Optional[float] = None
 
-    # OPTIMIZATION: Direct encoder tracking instead of deque
     def record_encoder_sample(self, value: int) -> Optional[int]:
         """Record encoder sample and return diff if we have 2 samples."""
         self.encoder_sample_prev = self.encoder_sample_current
@@ -392,7 +387,6 @@ class OAMSManager:
             if status_name != name:
                 attributes["oams"][name] = oam_status
 
-        # Use integer state
         state_names = {0: "UNLOADED", 1: "LOADED", 2: "LOADING", 3: "UNLOADING"}
         for fps_name, fps_state in self.current_state.fps_state.items():
             attributes[fps_name] = {
@@ -802,12 +796,13 @@ class OAMSManager:
             fps_state.since = self.reactor.monotonic()
             fps_state.current_oams = oams.name
             fps_state.current_spool_idx = oams.current_spool
+            fps_state.clear_encoder_samples()  # Clear stale encoder samples
         except Exception:
             self.logger.exception("Failed to capture unload state for %s", fps_name)
             return False, f"Failed to prepare unload on {fps_name}"
 
         try:
-            success, message = oams.unload_spool()
+            success, message = oams.unload_spool_with_retry()
         except Exception:
             self.logger.exception("Exception while unloading filament on %s", fps_name)
             return False, f"Exception unloading filament on {fps_name}"
@@ -857,9 +852,11 @@ class OAMSManager:
             try:
                 fps_state.state = FPSLoadState.LOADING
                 fps_state.encoder = oam.encoder_clicks
-                fps_state.since = self.reactor.monotonic()
                 fps_state.current_oams = oam.name
                 fps_state.current_spool_idx = bay_index
+                # Set since to now for THIS load attempt (will be updated on success)
+                fps_state.since = self.reactor.monotonic()
+                fps_state.clear_encoder_samples()
             except Exception:
                 self.logger.exception("Failed to capture load state for group %s bay %s", group_name, bay_index)
                 fps_state.state = FPSLoadState.UNLOADED
@@ -869,7 +866,7 @@ class OAMSManager:
                 continue
 
             try:
-                success, message = oam.load_spool(bay_index)
+                success, message = oam.load_spool_with_retry(bay_index)
             except Exception:
                 self.logger.exception("Exception while loading group %s bay %s", group_name, bay_index)
                 success, message = False, f"Exception loading spool {bay_index} on {group_name}"
@@ -878,14 +875,39 @@ class OAMSManager:
                 fps_state.current_group = group_name
                 fps_state.current_oams = oam.name
                 fps_state.current_spool_idx = bay_index
+                
+                # CRITICAL FIX: Set fps_state.since to the successful load time BEFORE changing state
+                # This prevents the monitor from seeing stale timestamps during LOADING state
+                successful_load_time = oam.get_last_successful_load_time(bay_index)
+                if successful_load_time is not None:
+                    fps_state.since = successful_load_time
+                else:
+                    fps_state.since = self.reactor.monotonic()
+                
+                # Now set state to LOADED after timestamp is correct
                 fps_state.state = FPSLoadState.LOADED
-                fps_state.since = self.reactor.monotonic()
+                
                 fps_state.direction = 1
                 self.current_group = group_name
                 fps_state.reset_stuck_spool_state()
                 fps_state.reset_clog_tracker()
                 self._ensure_forward_follower(fps_name, fps_state, "load filament")
-                self._schedule_post_load_pressure_check(fps_name, fps_state)
+                
+                # FIX: Skip post-load pressure check if this load completed after retries
+                # Retries indicate unstable conditions and pressure sensors need time to stabilize
+                skip_pressure_check = False
+                try:
+                    if hasattr(oam, 'last_load_was_retry'):
+                        skip_pressure_check = oam.last_load_was_retry(bay_index)
+                except Exception:
+                    self.logger.exception("Failed to check retry status for bay %d", bay_index)
+                    skip_pressure_check = False
+                
+                if not skip_pressure_check:
+                    self._schedule_post_load_pressure_check(fps_name, fps_state)
+                else:
+                    self.logger.info("OAMS[%s]: Skipping post-load pressure check after retry for spool %d", 
+                                     oam.oams_idx, bay_index)
 
                 if AMSRunoutCoordinator is not None:
                     lane_name: Optional[str] = None
@@ -1099,6 +1121,11 @@ class OAMSManager:
             self.logger.info("Restarted follower for %s spool %s after %s.", fps_name, fps_state.current_spool_idx, context)
 
     def _handle_printing_resumed(self, _eventtime):
+        # Check if monitors were stopped and need to be restarted
+        if not self.monitor_timers:
+            self.logger.info("Restarting monitors after pause/intervention")
+            self.start_monitors()
+        
         for fps_name, fps_state in self.current_state.fps_state.items():
             oams = self.oams.get(fps_state.current_oams) if fps_state.current_oams else None
             if fps_state.stuck_spool_restore_follower:
@@ -1142,7 +1169,6 @@ class OAMSManager:
         fps_state.stuck_spool_start_time = None
         self._pause_printer_message(message, fps_state.current_oams)
 
-    #  Consolidated unified monitor combining all checks
     def _unified_monitor_for_fps(self, fps_name):
         """Consolidated monitor handling all FPS checks in a single timer."""
         def _unified_monitor(self, eventtime):
@@ -1154,7 +1180,6 @@ class OAMSManager:
             
             oams = self.oams.get(fps_state.current_oams) if fps_state.current_oams else None
             
-            # Cache all sensor reads at once 
             try:
                 if oams:
                     encoder_value = oams.encoder_clicks
@@ -1169,7 +1194,6 @@ class OAMSManager:
             now = self.reactor.monotonic()
             state = fps_state.state
             
-            # Run appropriate checks based on state 
             if state == FPSLoadState.UNLOADING and now - fps_state.since > MONITOR_ENCODER_SPEED_GRACE:
                 self._check_unload_speed(fps_name, fps_state, oams, encoder_value, now)
             elif state == FPSLoadState.LOADING and now - fps_state.since > MONITOR_ENCODER_SPEED_GRACE:
@@ -1184,6 +1208,10 @@ class OAMSManager:
 
     def _check_unload_speed(self, fps_name, fps_state, oams, encoder_value, now):
         """Check unload speed using optimized encoder tracking."""
+        # Skip check if already handling a stuck spool
+        if fps_state.stuck_spool_active:
+            return
+            
         encoder_diff = fps_state.record_encoder_sample(encoder_value)
         if encoder_diff is None:
             return
@@ -1192,31 +1220,71 @@ class OAMSManager:
             self.logger.debug("OAMS[%d] Unload Monitor: Encoder diff %d", getattr(oams, "oams_idx", -1), encoder_diff)
         
         if encoder_diff < MIN_ENCODER_DIFF:
+            group_label = fps_state.current_group or fps_name
+            spool_label = str(fps_state.current_spool_idx) if fps_state.current_spool_idx is not None else "unknown"
+            message = f"Spool appears stuck while unloading {group_label} spool {spool_label}"
+            
+            # Abort the current unload operation cleanly
             try:
-                oams.set_led_error(fps_state.current_spool_idx, 1)
+                oams.abort_current_action()
+                self.logger.info("Aborted stuck spool unload operation on %s", fps_name)
             except Exception:
-                self.logger.exception("Failed to set unload LED on %s", fps_name)
-            self._pause_printer_message("Printer paused because the unloading speed of the moving filament was too low", fps_state.current_oams)
-            self.stop_monitors()
+                self.logger.exception("Failed to abort unload operation on %s", fps_name)
+            
+            # Transition to LOADED state cleanly (unload failed, so still loaded)
+            fps_state.state = FPSLoadState.LOADED
+            fps_state.clear_encoder_samples()
+            
+            # Trigger the pause but DON'T stop monitors - let them keep running
+            self._trigger_stuck_spool_pause(fps_name, fps_state, oams, message)
 
     def _check_load_speed(self, fps_name, fps_state, oams, encoder_value, now):
         """Check load speed using optimized encoder tracking."""
         if fps_state.stuck_spool_active:
             return
-        
+
+        # Skip check if we don't have a valid since timestamp
+        if fps_state.since is None:
+            return
+            
+        # Skip check if we're still in grace period
+        if now - fps_state.since <= MONITOR_ENCODER_SPEED_GRACE:
+            return
+
         encoder_diff = fps_state.record_encoder_sample(encoder_value)
         if encoder_diff is None:
             return
-        
+
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("OAMS[%d] Load Monitor: Encoder diff %d", getattr(oams, "oams_idx", -1), encoder_diff)
         
         if encoder_diff < MIN_ENCODER_DIFF:
             group_label = fps_state.current_group or fps_name
             spool_label = str(fps_state.current_spool_idx) if fps_state.current_spool_idx is not None else "unknown"
-            message = f"Spool appears stuck while loading {group_label} spool {spool_label}"
-            self._trigger_stuck_spool_pause(fps_name, fps_state, oams, message)
-            self.stop_monitors()
+            
+            # Abort the current load operation cleanly
+            try:
+                oams.abort_current_action()
+                self.logger.info("Aborted stuck spool load operation on %s", fps_name)
+            except Exception:
+                self.logger.exception("Failed to abort load operation on %s", fps_name)
+            
+            # Set LED error
+            try:
+                oams.set_led_error(fps_state.current_spool_idx, 1)
+            except Exception:
+                self.logger.exception("Failed to set LED during load stuck detection on %s", fps_name)
+            
+            # Transition to UNLOADED state cleanly
+            fps_state.state = FPSLoadState.UNLOADED
+            fps_state.clear_encoder_samples()
+            
+            # Set the stuck flag but DON'T pause - let the OAMS retry logic handle it
+            # The retry logic will clear this flag if the retry succeeds
+            fps_state.stuck_spool_active = True
+            fps_state.stuck_spool_start_time = None
+            
+            self.logger.info("Spool appears stuck while loading %s spool %s - letting retry logic handle it", group_label, spool_label)
 
     def _check_stuck_spool(self, fps_name, fps_state, fps, oams, pressure, hes_values, now):
         """Check for stuck spool conditions."""
@@ -1247,11 +1315,22 @@ class OAMSManager:
 
         if fps_state.since is not None and now - fps_state.since < STUCK_SPOOL_LOAD_GRACE:
             fps_state.stuck_spool_start_time = None
+            # Clear stuck spool flag during grace period after successful load
+            if fps_state.stuck_spool_active:
+                if oams is not None and fps_state.current_spool_idx is not None:
+                    try:
+                        oams.set_led_error(fps_state.current_spool_idx, 0)
+                    except Exception:
+                        self.logger.exception("Failed to clear stuck spool LED during grace period on %s", fps_name)
+                fps_state.reset_stuck_spool_state(preserve_restore=True)
             return
 
         if not fps_state.following or fps_state.direction != 1:
             fps_state.stuck_spool_start_time = None
-            if fps_state.stuck_spool_restore_follower and is_printing and oams is not None:
+            # Auto-enable follower if we have a spool loaded but follower is disabled
+            if is_printing and oams is not None and not fps_state.following:
+                self._ensure_forward_follower(fps_name, fps_state, "auto-enable after manual load")
+            elif fps_state.stuck_spool_restore_follower and is_printing and oams is not None:
                 self._restore_follower_if_needed(fps_name, fps_state, oams, "stuck spool recovery")
             return
 
@@ -1353,12 +1432,11 @@ class OAMSManager:
             self._pause_printer_message(message, fps_state.current_oams)
 
     def start_monitors(self):
-        """Start all monitoring timers """
+        """Start all monitoring timers"""
         self.monitor_timers = []
         self.runout_monitors = {}
         reactor = self.printer.get_reactor()
         
-        # Single unified monitor per FPS instead of 4+ separate timers
         for fps_name in self.current_state.fps_state.keys():
             self.monitor_timers.append(
                 reactor.register_timer(
