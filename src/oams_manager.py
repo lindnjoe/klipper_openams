@@ -1128,6 +1128,12 @@ class OAMSManager:
         
         for fps_name, fps_state in self.current_state.fps_state.items():
             oams = self.oams.get(fps_state.current_oams) if fps_state.current_oams else None
+            
+            # Clear stuck_spool_active on resume to allow follower to restart
+            if fps_state.stuck_spool_active:
+                fps_state.reset_stuck_spool_state(preserve_restore=True)
+                self.logger.info("Cleared stuck spool state for %s on print resume", fps_name)
+            
             if fps_state.stuck_spool_restore_follower:
                 self._restore_follower_if_needed(fps_name, fps_state, oams, "print resume")
             elif (fps_state.current_oams is not None and fps_state.current_spool_idx is not None and not fps_state.following):
@@ -1352,19 +1358,22 @@ class OAMSManager:
                     message = f"Spool appears stuck on {fps_state.current_group} spool {fps_state.current_spool_idx}"
                 self._trigger_stuck_spool_pause(fps_name, fps_state, oams, message)
         else:
+            # Clear stuck spool state when pressure returns to normal
             if fps_state.stuck_spool_active and oams is not None and fps_state.current_spool_idx is not None:
                 try:
                     oams.set_led_error(fps_state.current_spool_idx, 0)
                 except Exception:
                     self.logger.exception("Failed to clear stuck spool LED on %s spool %d", fps_name, fps_state.current_spool_idx)
+                
+                # Clear the stuck_spool_active flag BEFORE trying to restore follower
+                fps_state.reset_stuck_spool_state(preserve_restore=True)
+                self.logger.info("Cleared stuck spool state for %s, pressure restored", fps_name)
 
+            # Now restore/enable follower
             if fps_state.stuck_spool_restore_follower and is_printing:
                 self._restore_follower_if_needed(fps_name, fps_state, oams, "stuck spool recovery")
             elif is_printing and not fps_state.following:
                 self._ensure_forward_follower(fps_name, fps_state, "stuck spool recovery")
-            
-            if not fps_state.stuck_spool_restore_follower:
-                fps_state.reset_stuck_spool_state()
 
     def _check_clog(self, fps_name, fps_state, fps, oams, encoder_value, pressure, now):
         """Check for clog conditions."""
