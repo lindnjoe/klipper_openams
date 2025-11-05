@@ -16,7 +16,7 @@ The `git checkout -B` command ensures you end up on a local `lindnjoe-master` br
 tracks this repository, so subsequent updates can be pulled with a simple `git pull` while
 that branch is checked out.
 
-Install OpenAMS using the provided script for first time installs:
+Install OpenAMS using the provided script:
 
 ```bash
 cd ~  
@@ -110,12 +110,12 @@ To integrate OpenAMS with the Armored Turtle AFC Klipper add-on, install the add
 
 The installer does not yet list an OpenAMS-specific unit type; when prompted, choose the Box Turtle option and accept the default settings. Once the installation completes, delete the generated `AFC_Turtle_1.cfg` file from the `printer_data/config/AFC/` directory to avoid conflicts with the OpenAMS configuration.
 
-For best results, perform the installation while your OpenAMS unit is empty so that the AFC installer can update its system files without interruption. After installing the add-on, copy the provided `AFC_AMS1.cfg`, `AFC_oamsc.cfg`, and `AFC_oams_macros.cfg` files into the AFC configuration directory so that they can be included by your printer configuration:
+For best results, perform the installation while your OpenAMS unit is empty so that the AFC installer can update its system files without interruption. After installing the add-on, copy the provided `AFC_AMS1.cfg`, `AFC_Oams.cfg`, and `AFC_Oams_Macros.cfg` files into the AFC configuration directory so that they can be included by your printer configuration:
 
 ```bash
 cp AFC_AMS1.cfg <printer_data path>/config/AFC/
-cp AFC_oamsc.cfg <printer_data path>/config/AFC/
-cp AFC_oams_macros.cfg <printer_data path>/config/AFC/
+cp AFC_Oams.cfg <printer_data path>/config/AFC/
+cp AFC_Oams_Macros.cfg <printer_data path>/config/AFC/
 ```
 
 Edit each file to match your specific hardware setup.
