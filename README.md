@@ -1,6 +1,16 @@
 *** Copy the AFC_OpenAMS.py and openams_integration.py that are included to the ~/Klipper-Add-On/extras folder. This won't be necessary once these are pulled in upstream, I will delete this when that is done.***
 
 
+If you already have OpenAMS installed and want to switch to this fork, run:
+
+```bash
+cd ~/klipper_openams
+git remote add lindnjoe https://github.com/lindnjoe/klipper_openams
+git fetch lindnjoe
+git checkout lindnjoe/master
+./install-openams.sh
+```
+
 Install OpenAMS using the provided script:
 
 ```bash
