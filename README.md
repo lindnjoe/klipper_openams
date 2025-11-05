@@ -1,6 +1,21 @@
 *** Copy the AFC_OpenAMS.py and openams_integration.py that are included to the ~/Klipper-Add-On/extras folder. This won't be necessary once these are pulled in upstream, I will delete this when that is done.***
 
 
+If you already have OpenAMS installed and want to switch to this fork, run:
+
+```bash
+cd ~/klipper_openams
+git remote add lindnjoe https://github.com/lindnjoe/klipper_openams 2>/dev/null \
+  || git remote set-url lindnjoe https://github.com/lindnjoe/klipper_openams
+git fetch lindnjoe master
+git checkout -B lindnjoe-master lindnjoe/master
+./install-openams.sh
+```
+
+The `git checkout -B` command ensures you end up on a local `lindnjoe-master` branch that
+tracks this repository, so subsequent updates can be pulled with a simple `git pull` while
+that branch is checked out.
+
 Install OpenAMS using the provided script:
 
 ```bash
@@ -95,17 +110,27 @@ To integrate OpenAMS with the Armored Turtle AFC Klipper add-on, install the add
 
 The installer does not yet list an OpenAMS-specific unit type; when prompted, choose the Box Turtle option and accept the default settings. Once the installation completes, delete the generated `AFC_Turtle_1.cfg` file from the `printer_data/config/AFC/` directory to avoid conflicts with the OpenAMS configuration.
 
-For best results, perform the installation while your OpenAMS unit is empty so that the AFC installer can update its system files without interruption. After installing the add-on, copy the provided `AFC_AMS1.cfg`, `AFC_oamsc.cfg`, and `AFC_oams_macros.cfg` files into the AFC configuration directory so that they can be included by your printer configuration:
+For best results, perform the installation while your OpenAMS unit is empty so that the AFC installer can update its system files without interruption. After installing the add-on, copy the provided `AFC_AMS1.cfg`, `AFC_Oams.cfg`, and `AFC_Oams_Macros.cfg` files into the AFC configuration directory so that they can be included by your printer configuration:
 
 ```bash
 cp AFC_AMS1.cfg <printer_data path>/config/AFC/
-cp AFC_oamsc.cfg <printer_data path>/config/AFC/
-cp AFC_oams_macros.cfg <printer_data path>/config/AFC/
+cp AFC_Oams.cfg <printer_data path>/config/AFC/
+cp AFC_Oams_Macros.cfg <printer_data path>/config/AFC/
 ```
 
 Edit each file to match your specific hardware setup.
 
-If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`. 
+If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`.
+
+If you want to enable the new smart temperature purge macros, replace the standard macros file with `AFC_Oams_Smart_Purge_Temp_Macros.cfg` instead:
+
+```bash
+cp AFC_AMS1.cfg <printer_data path>/config/AFC/
+cp AFC_Oams.cfg <printer_data path>/config/AFC/
+cp AFC_Oams_Smart_Purge_Temp_Macros.cfg <printer_data path>/config/AFC/AFC_Oams_Macros.cfg
+```
+
+The smart purge macros automatically stage purges at temperature targets that match each filament's configured purge requirements. After copying the file, edit the `[gcode_macro AFC_PURGE_*]` sections to align the purge temperatures and lengths with your profiles. When the macros run, they will heat to the defined purge temperature, perform the purge, and then hand control back to the active print temperature so the toolhead does not linger at elevated heat.
 
 Before rebooting, update the AFC hardware configuration to ensure the tool sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set `pin_tool_start:` within the `[AFC_extruder extruder]` section. Use `pin_tool_start: AMS_extruder` when the filament pressure sensor (FPS) handles filament sensing with ramming; otherwise, set the value to the toolhead filament sensor pin that matches your printer's wiring.
 
