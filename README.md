@@ -118,6 +118,10 @@ cp AFC_Oams.cfg <printer_data path>/config/AFC/
 cp AFC_Oams_Macros.cfg <printer_data path>/config/AFC/
 ```
 
+Replace `<printer_data path>` with the full path to your Klipper `printer_data` directory. On
+most installations this will be `~/printer_data`, but adjust it if you keep your configuration
+elsewhere.
+
 Edit each file to match your specific hardware setup.
 
 If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`.
@@ -130,7 +134,10 @@ cp AFC_Oams.cfg <printer_data path>/config/AFC/
 cp AFC_Oams_Smart_Purge_Temp_Macros.cfg <printer_data path>/config/AFC/AFC_Oams_Macros.cfg
 ```
 
-The smart purge macros automatically stage purges at temperature targets that match each filament's configured purge requirements. After copying the file, edit the `[gcode_macro AFC_PURGE_*]` sections to align the purge temperatures and lengths with your profiles. When the macros run, they will heat to the defined purge temperature, perform the purge, and then hand control back to the active print temperature so the toolhead does not linger at elevated heat. During a toolchange, the macros compare the purge temperature stored for the currently loaded spool with the value defined for the incoming spool and heat to the higher of the two so the melt zone is safe for both materials. If no spool was previously loaded (such as the first load after a reboot), the macros fall back to the default purge temperature defined in the `_CALCULATE_PURGE_TEMP` helper (240 °C unless you customize it).
+Again, be sure to swap `<printer_data path>` for the location of your own Klipper `printer_data`
+directory before running the commands.
+
+The smart purge macros determine a purge temperature by reading the `extruder_temp` values you configure for each lane and caching the last spool that was active. After copying the file, edit the `[gcode_macro AFC_PURGE_*]` sections so the purge temperatures and extrusion lengths match your profiles. During the unload phase the macros either use a provided purge temperature, pull the stored value for the currently loaded lane, or fall back to the default of 240 °C (with a safety floor of 210 °C). When a toolchange completes, `_CALCULATE_PURGE_TEMP` compares the cached lane from the unload with the incoming spool, stores the higher of the two purge temperatures in `_oams_temp_cache`, and heats to that value before loading and purging. If no spool was previously loaded—such as the first load after a reboot—the helper relies on its default temperature setting (240 °C unless you customize it). The macros leave the heater at the purge temperature when they finish, so your print start G-code or slicer must issue the final temperature command for the active tool.
 
 Before rebooting, update the AFC hardware configuration to ensure the tool sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set `pin_tool_start:` within the `[AFC_extruder extruder]` section. Use `pin_tool_start: AMS_extruder` when the filament pressure sensor (FPS) handles filament sensing with ramming; otherwise, set the value to the toolhead filament sensor pin that matches your printer's wiring.
 
