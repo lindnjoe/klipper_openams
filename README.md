@@ -5,11 +5,16 @@ If you already have OpenAMS installed and want to switch to this fork, run:
 
 ```bash
 cd ~/klipper_openams
-git remote add lindnjoe https://github.com/lindnjoe/klipper_openams
-git fetch lindnjoe
-git checkout lindnjoe/master
+git remote add lindnjoe https://github.com/lindnjoe/klipper_openams 2>/dev/null \
+  || git remote set-url lindnjoe https://github.com/lindnjoe/klipper_openams
+git fetch lindnjoe master
+git checkout -B lindnjoe-master lindnjoe/master
 ./install-openams.sh
 ```
+
+The `git checkout -B` command ensures you end up on a local `lindnjoe-master` branch that
+tracks this repository, so subsequent updates can be pulled with a simple `git pull` while
+that branch is checked out.
 
 Install OpenAMS using the provided script:
 
