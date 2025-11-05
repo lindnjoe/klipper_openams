@@ -34,7 +34,7 @@ CLOG_SENSITIVITY_LEVELS = {
 }
 CLOG_SENSITIVITY_DEFAULT = "medium"
 
-POST_LOAD_PRESSURE_THRESHOLD = 0.70
+POST_LOAD_PRESSURE_THRESHOLD = 0.65
 POST_LOAD_PRESSURE_DWELL = 15.0
 POST_LOAD_PRESSURE_CHECK_PERIOD = 0.5
 
@@ -1134,6 +1134,17 @@ class OAMSManager:
                 fps_state.reset_stuck_spool_state(preserve_restore=True)
                 self.logger.info("Cleared stuck spool state for %s on print resume", fps_name)
             
+            # Clear clog_active on resume and reset tracker
+            if fps_state.clog_active:
+                fps_state.reset_clog_tracker()
+                self.logger.info("Cleared clog state for %s on print resume", fps_name)
+                # Clear the error LED if we have an OAMS and spool index
+                if oams is not None and fps_state.current_spool_idx is not None:
+                    try:
+                        oams.set_led_error(fps_state.current_spool_idx, 0)
+                    except Exception:
+                        self.logger.exception("Failed to clear clog LED on %s after resume", fps_name)
+            
             if fps_state.stuck_spool_restore_follower:
                 self._restore_follower_if_needed(fps_name, fps_state, oams, "print resume")
             elif (fps_state.current_oams is not None and fps_state.current_spool_idx is not None and not fps_state.following):
@@ -1557,6 +1568,7 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
+
 
 
 
