@@ -120,7 +120,17 @@ cp AFC_Oams_Macros.cfg <printer_data path>/config/AFC/
 
 Edit each file to match your specific hardware setup.
 
-If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`. 
+If you used the default installation layout, the destination path will be `~/printer_data/config/AFC/`.
+
+If you want to enable the new smart temperature purge macros, replace the standard macros file with `AFC_Oams_Smart_Purge_Temp_Macros.cfg` instead:
+
+```bash
+cp AFC_AMS1.cfg <printer_data path>/config/AFC/
+cp AFC_Oams.cfg <printer_data path>/config/AFC/
+cp AFC_Oams_Smart_Purge_Temp_Macros.cfg <printer_data path>/config/AFC/AFC_Oams_Macros.cfg
+```
+
+The smart purge macros automatically stage purges at temperature targets that match each filament's configured purge requirements. After copying the file, edit the `[gcode_macro AFC_PURGE_*]` sections to align the purge temperatures and lengths with your profiles. When the macros run, they will heat to the defined purge temperature, perform the purge, and then hand control back to the active print temperature so the toolhead does not linger at elevated heat.
 
 Before rebooting, update the AFC hardware configuration to ensure the tool sensor pin is defined. Edit `printer_data/config/AFC/AFC_Hardware.cfg` and set `pin_tool_start:` within the `[AFC_extruder extruder]` section. Use `pin_tool_start: AMS_extruder` when the filament pressure sensor (FPS) handles filament sensing with ramming; otherwise, set the value to the toolhead filament sensor pin that matches your printer's wiring.
 
