@@ -1,10 +1,11 @@
-# OpenAMS Mainboard 
+# OpenAMS Mainboard (OPTIMIZED) - FIXED VERSION
 #
 # Copyright (C) 2025 JR Lomas <lomas.jr@gmail.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
-
+# FIX: Added last_load_was_retry() method to prevent false positive clog detection
+#      after successful load retries
 
 import logging
 import mcu
@@ -791,6 +792,3 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
-
-
-
