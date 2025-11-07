@@ -890,6 +890,15 @@ class OAMSManager:
                     AMSRunoutCoordinator.notify_lane_tool_state(self.printer, fps_state.current_oams or oams.name, lane_name, loaded=False, spool_index=spool_index, eventtime=fps_state.since)
                 except Exception:
                     self.logger.exception("Failed to notify AFC that lane %s unloaded on %s", lane_name, fps_name)
+
+            # Clear LED error state if stuck spool was active before resetting state
+            if fps_state.stuck_spool_active and oams is not None and spool_index is not None:
+                try:
+                    oams.set_led_error(spool_index, 0)
+                    self.logger.info("Cleared stuck spool LED for %s spool %d after successful unload", fps_name, spool_index)
+                except Exception:
+                    self.logger.exception("Failed to clear LED on %s spool %d after successful unload", fps_name, spool_index)
+
             fps_state.current_group = None
             fps_state.current_spool_idx = None
             self.current_group = None
@@ -962,6 +971,15 @@ class OAMSManager:
                 
                 fps_state.direction = 1
                 self.current_group = group_name
+
+                # Clear LED error state if stuck spool was active before resetting state
+                if fps_state.stuck_spool_active and oam is not None and bay_index is not None:
+                    try:
+                        oam.set_led_error(bay_index, 0)
+                        self.logger.info("Cleared stuck spool LED for %s spool %d after successful load", fps_name, bay_index)
+                    except Exception:
+                        self.logger.exception("Failed to clear LED on %s spool %d after successful load", fps_name, bay_index)
+
                 fps_state.reset_stuck_spool_state()
                 fps_state.reset_clog_tracker()
                 self._ensure_forward_follower(fps_name, fps_state, "load filament")
@@ -1772,6 +1790,7 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
+
 
 
 
