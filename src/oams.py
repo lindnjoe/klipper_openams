@@ -1,4 +1,4 @@
-# OpenAMS Mainboard (OPTIMIZED) - FIXED VERSION
+# OpenAMS Mainboard 
 #
 # Copyright (C) 2025 JR Lomas <lomas.jr@gmail.com>
 #
@@ -69,6 +69,9 @@ class OAMS:
         self.section_name = config.get_name().split()[-1]
         self.mcu = mcu.get_printer_mcu(self.printer, config.get("mcu", "mcu"))
         self.reactor = self.printer.get_reactor()
+
+        # OPTIMIZATION: Cache gcode object
+        self._cached_gcode = None
         
         # Hardware configuration - Pressure sensor thresholds
         self.fps_upper_threshold: float = config.getfloat("fps_upper_threshold")
@@ -266,7 +269,10 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
     def register_commands(self, name):
         id = str(self.oams_idx)
-        gcode = self.printer.lookup_object("gcode")
+        # OPTIMIZATION: Cache gcode object lookup
+        if self._cached_gcode is None:
+            self._cached_gcode = self.printer.lookup_object("gcode")
+        gcode = self._cached_gcode
 
         # Register all mux commands
         commands = [
@@ -792,3 +798,4 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
+
