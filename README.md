@@ -1,4 +1,4 @@
-*** Copy the AFC_OpenAMS.py and openams_integration.py that are included to the ~/Klipper-Add-On/extras folder. This won't be necessary once these are pulled in upstream, I will delete this when that is done.***
+*** After installation, copy the AFC_OpenAMS.py and openams_integration.py that are included to the ~/Klipper-Add-On/extras folder. This won't be necessary once these are pulled in upstream, I will delete this when that is done.***
 
 
 If you already have OpenAMS installed and want to switch to this fork, run:
