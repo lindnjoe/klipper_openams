@@ -16,7 +16,7 @@ The `git checkout -B` command ensures you end up on a local `lindnjoe-master` br
 tracks this repository, so subsequent updates can be pulled with a simple `git pull` while
 that branch is checked out.
 
-Install OpenAMS using the provided script:
+If this is your first time installing OpenAMS, install OpenAMS using the provided script:
 
 ```bash
 cd ~  
