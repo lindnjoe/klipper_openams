@@ -107,6 +107,8 @@ To integrate OpenAMS with the Armored Turtle AFC Klipper add-on, install the add
 ```bash
 ./install-afc.sh -b multi_extruder
 ```
+I highly recommend reading over the Armored Turtle setup documentation. Most of it will apply directly to setting up your config files, but some of the info there is specific to the box turtle and wont apply. It should hopefully be obvious the things that won't apply to AMS. If not sure just ask or leave default setting in place. https://www.armoredturtle.xyz/docs/boxturtle/initial_startup/01-overview.html
+AFC system macros will apply to AMS lanes if/when enabled in AFC.cfg.
 
 The installer does not yet list an OpenAMS-specific unit type; when prompted, choose the Box Turtle option and accept the default settings. Once the installation completes, delete the generated `AFC_Turtle_1.cfg` file from the `printer_data/config/AFC/` directory to avoid conflicts with the OpenAMS configuration.
 
