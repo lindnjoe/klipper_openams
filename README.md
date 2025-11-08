@@ -163,17 +163,20 @@ retry_backoff_base: 1.0        # Base delay in seconds between retries (default:
 retry_backoff_max: 5.0         # Maximum delay between retries (default: 5.0)
 auto_unload_on_failed_load: True   # Automatically unload before retry (default: True)
 
-# CAN bus UUID (required)
+# CAN bus UUID Or Serial Id if using USB
 canbus_uuid: <your_unique_OAMS_MCU1_UUID>
+serial: /dev/serial/by-id/
 
 # Additional settings as needed...
 ```
 
 **Important Configuration Notes:**
 
-1. **CAN UUIDs**: You must update the `canbus_uuid` values with your actual hardware UUIDs. Find them with:
+1. **CAN UUIDs**: You must update the `canbus_uuid or serial: /dev/serial/by-id/` values with your actual hardware UUIDs. Find them with:
    ```bash
    ~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can0
+   or
+   ls /dev/serial/by-id/*  
    ```
 
 2. **Retry Settings**: The defaults work well for most setups, but you may need to adjust:
