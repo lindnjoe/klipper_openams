@@ -501,9 +501,8 @@ After completing the OpenAMS and AFC installation, calibrate each OpenAMS unit t
 - Prevention of loading errors during multi-material prints
 
 **Troubleshooting Calibration:**
-- If calibration fails, check that your CAN bus is properly configured
 - Ensure filament is loaded in the lane being calibrated
-- Verify encoder is clean and functioning
+- Verify encoder (hub) is clean and functioning
 - Check that tube lengths are within reasonable bounds (50-2000mm typical)
 
 ## Infinite Spooling
