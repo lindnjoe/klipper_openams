@@ -1,4 +1,4 @@
-<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/a2558a4a-9802-4798-aacf-efd5ea3a66d8" />
+<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/a2558a4a-9802-4798-aacf-efd5ea3a66d8" />
 
 
 # OpenAMS for Klipper
