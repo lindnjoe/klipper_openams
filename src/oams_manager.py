@@ -1199,9 +1199,26 @@ class OAMSManager:
                 except Exception:
                     self.logger.exception("Failed to set clog LED on %s spool %s after loading", fps_name, tracked_state.current_spool_idx)
 
+            # Set restore flags and disable follower before pausing (matching runtime clog detection pattern)
+            direction = tracked_state.direction if tracked_state.direction in (0, 1) else 1
+            tracked_state.clog_restore_follower = True
+            tracked_state.clog_restore_direction = direction
+
+            # Disable follower first to give user manual control
+            if oams_obj is not None and tracked_state.following:
+                try:
+                    oams_obj.set_oams_follower(0, direction)
+                except Exception:
+                    self.logger.exception("Failed to stop follower on %s during post-load clog pause", fps_name)
+            tracked_state.following = False
+
             tracked_state.clog_active = True
             message = f"Possible clog detected after loading {tracked_state.current_group or fps_name}: FPS pressure {pressure:.2f} remained above {POST_LOAD_PRESSURE_THRESHOLD:.2f}"
             self._pause_printer_message(message, tracked_state.current_oams)
+
+            # Immediately re-enable follower so user can manually fix filament with follower tracking
+            self._reactivate_clog_follower(fps_name, tracked_state, oams_obj, "post-load clog pause")
+
             self._cancel_post_load_pressure_check(tracked_state)
             return self.reactor.NEVER
 
@@ -1790,13 +1807,3 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
-
-
-
-
-
-
-
-
-
-
