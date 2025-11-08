@@ -534,7 +534,7 @@ SET_RUNOUT LANE=1 RUNOUT=2
 1. Navigate to the AFC panel
 2. Select the primary lane
 3. Set the runout lane in the configuration dropdown
-4. Save changes
+
 
 **Multi-Lane Chains:**
 
@@ -615,8 +615,7 @@ If the printer pauses due to false clog detection:
 3. **Verify encoder function:**
    - Clean encoder wheel
    - Check encoder wiring
-   - Test encoder sensor position
-
+ 
 ### LED Issues
 
 **LEDs not changing color:**
@@ -627,7 +626,7 @@ If the printer pauses due to false clog detection:
    led_index: AFC_indicator:1
    ```
 
-2. **Check LED strip configuration** in printer.cfg
+2. **Check LED strip configuration** 
 3. **Test LEDs directly:**
    ```
    SET_LED LED=AFC_indicator INDEX=1 RED=1.0 GREEN=0 BLUE=0
@@ -682,14 +681,7 @@ If the printer pauses due to false clog detection:
    - Invalid pin names
    - Syntax errors in macros
 
-3. **Verify includes are correct** in printer.cfg:
-   ```ini
-   [include AFC/AFC_AMS1.cfg]
-   [include AFC/AFC_Oams.cfg]
-   [include AFC/AFC_Oams_Macros.cfg]
-   ```
-
-4. **Test configuration syntax:**
+3. **Test configuration syntax:**
    ```bash
    ~/klippy-env/bin/python ~/klipper/klippy/klippy.py ~/printer_data/config/printer.cfg -d ~/printer_data/klipper.dict -l /tmp/test.log
    ```
@@ -705,11 +697,11 @@ If you're still experiencing issues:
    - AFC version
    - OpenAMS fork commit hash: `git -C ~/klipper_openams rev-parse HEAD`
    - Full error messages from logs
-   - Configuration files (sanitize UUIDs if sharing publicly)
+   - Configuration files
 
 4. **Ask for help:**
    - GitHub Issues: https://github.com/lindnjoe/klipper_openams/issues
-   - Discord: Find knight.rad_iant on relevant Klipper/AFC Discord servers
+
 
 ## Credits
 
