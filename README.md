@@ -114,7 +114,7 @@ If your directory structure differs from the standard layout, configure the inst
 ./install-openams.sh -k /home/pi/klipper -c /home/pi/printer_data/config
 ```
 
-### Post-Installation File Copy
+### Post-Installation File Copy *Don't do this now, do this after full installation is complete*
 
 **Important:** After installation, copy the required AFC integration modules to your Klipper AFC add-on extras folder:
 
