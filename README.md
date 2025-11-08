@@ -1,6 +1,6 @@
 # OpenAMS for Klipper
 
-A Klipper integration for the OpenAMS that enables multi-material printing with automatic filament management, runout detection, and intelligent retry logic.
+A Klipper integration for OpenAMS that enables multi-material printing with automatic filament management, runout detection, and intelligent retry logic.
 
 ## Table of Contents
 
