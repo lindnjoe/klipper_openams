@@ -172,7 +172,7 @@ serial: /dev/serial/by-id/
 
 **Important Configuration Notes:**
 
-1. **CAN UUIDs**: You must update the `canbus_uuid or serial: /dev/serial/by-id/` values with your actual hardware UUIDs. Find them with:
+1. **MCU UUIDs**: You must update the `canbus_uuid or serial: /dev/serial/by-id/` values with your actual hardware UUIDs. Find them with:
    ```bash
    ~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can0
    or
@@ -182,7 +182,7 @@ serial: /dev/serial/by-id/
 2. **Retry Settings**: The defaults work well for most setups, but you may need to adjust:
    - Increase `load_retry_max` if filament occasionally fails to load on first attempt
    - Increase `retry_backoff_base` if your hardware needs more recovery time
-   - Note: `auto_unload_on_failed_load` defaults to `True` (automatically unloads before retrying a failed load)
+  
 
 ### Retry Behavior
 
@@ -232,6 +232,13 @@ The `clog_sensitivity` setting in `[oams_manager]` controls how aggressive the c
 This OpenAMS fork is designed to work with Armored Turtle's AFC (Automatic Filament Changer) Klipper add-on.
 
 ### Installing AFC
+
+Clone the Armored Turtle Repo
+
+```bash
+cd ~
+git clone https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git
+```
 
 Install the AFC add-on from the multi_extruder branch:
 
