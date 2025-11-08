@@ -57,7 +57,7 @@ Before installing OpenAMS, ensure you have:
 
 1. **Klipper** installed and running
 2. **Moonraker** configured
-3. **MCU's** configured for FPS and AMS board
+3. **MCU's** uuid's for FPS and AMS board
 4. **Optional but recommended:**
    - Spoolman for filament tracking
    - Mainsail or Fluidd web interface
