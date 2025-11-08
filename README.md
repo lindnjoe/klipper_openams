@@ -57,13 +57,8 @@ Before installing OpenAMS, ensure you have:
 
 1. **Klipper** installed and running
 2. **Moonraker** configured
-3. **CAN bus** configured (OpenAMS uses CAN for communication)
-4. **OpenAMS Hardware** with:
-   - FPS (Filament Presence Sensor) board(s)
-   - OAMS MCU board(s)
-   - Proper CAN wiring and termination
-
-5. **Optional but recommended:**
+3. **MCU's** configured for FPS and AMS board
+4. **Optional but recommended:**
    - Spoolman for filament tracking
    - Mainsail or Fluidd web interface
 
