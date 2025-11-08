@@ -130,7 +130,7 @@ cp spoolman_led_sync.py ~/Klipper-Add-On/extras/
 
 ### OpenAMS Manager Settings
 
-The `[oams_manager]` section controls global OpenAMS behavior. Add this to your `printer.cfg`:
+The `[oams_manager]` section controls global OpenAMS behavior.:
 
 ```ini
 [oams_manager]
