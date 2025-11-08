@@ -289,7 +289,7 @@ Replace `~/printer_data` with your actual printer data path if different.
 |------|---------|------------|
 | `AFC_AMS1.cfg` | Defines AFC lanes mapped to OpenAMS slots | Yes - configure for your setup |
 | `AFC_Oams.cfg` | OpenAMS hardware configuration (MCU, sensors, etc.) | Yes - set CAN UUIDs and calibration values |
-| `AFC_Oams_Macros.cfg` | Standard load/unload macros | Optional - customize for your workflow |
+| `AFC_Oams_Macros.cfg` | Standard load/unload macros | Yes - customize for your workflow |
 | `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Advanced temperature-aware macros | Optional - see below |
 
 **Editing Configuration Files:**
