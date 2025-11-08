@@ -156,12 +156,12 @@ For each OAMS unit, configure retry behavior in your OAMS hardware configuration
 [oams oams1]
 mcu: oams_mcu1
 
-# Retry Configuration
+# Retry Configuration (all optional - defaults shown in comments)
 load_retry_max: 3              # Maximum number of load retry attempts (default: 3)
 unload_retry_max: 2            # Maximum number of unload retry attempts (default: 2)
 retry_backoff_base: 1.0        # Base delay in seconds between retries (default: 1.0)
 retry_backoff_max: 5.0         # Maximum delay between retries (default: 5.0)
-auto_unload_on_failed_load: True   # Automatically unload before retry (default: True)
+# auto_unload_on_failed_load: True  # Defaults to True - only set if you need False
 
 # CAN bus UUID Or Serial Id if using USB
 canbus_uuid: <your_unique_OAMS_MCU1_UUID>
@@ -182,7 +182,7 @@ serial: /dev/serial/by-id/
 2. **Retry Settings**: The defaults work well for most setups, but you may need to adjust:
    - Increase `load_retry_max` if filament occasionally fails to load on first attempt
    - Increase `retry_backoff_base` if your hardware needs more recovery time
-   - Set `auto_unload_on_failed_load: False` only if your setup handles partial loads differently
+   - Note: `auto_unload_on_failed_load` defaults to `True` (automatically unloads before retrying a failed load)
 
 ### Retry Behavior
 
