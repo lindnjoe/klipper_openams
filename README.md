@@ -145,7 +145,7 @@ clog_sensitivity: medium
 ```
 
 **Configuration Tips:**
-- **reload_before_toolhead_distance**: Set to 30-50mm for faster runout response. Requires tuning based on your bowden length.
+- **reload_before_toolhead_distance**: Set this to a positive value to load replacement spool sooner. Helpful with longer ptfe lengths and faster printing speeds. May require manual tuning to get just right for your printer.
 - **clog_sensitivity**: Start with `medium`. Increase to `high` if clogs go undetected. Decrease to `low` if false positives occur.
 
 ### OAMS Hardware Settings
