@@ -116,12 +116,12 @@ If your directory structure differs from the standard layout, configure the inst
 
 ### Post-Installation File Copy *Don't do this now, do this after full installation is complete*
 
-**Important:** After installation, copy the required AFC integration modules to your Klipper AFC add-on extras folder:
+***********THE FOLLOWING STEP MUST BE DONE LAST TO UPDATE TO CURRENT WORKING VERSION - WILL REMOVE WHEN UPSTREAM UPDATED********
+**Important:** After installation, copy the UPDATED AFC integration modules to your Klipper AFC add-on extras folder:
 
 ```bash
 cp AFC_OpenAMS.py ~/Klipper-Add-On/extras/
 cp openams_integration.py ~/Klipper-Add-On/extras/
-cp spoolman_led_sync.py ~/Klipper-Add-On/extras/
 ```
 
 *Note: This manual copy step will be removed once these modules are merged upstream into the AFC add-on.*
