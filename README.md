@@ -295,9 +295,9 @@ Replace `~/printer_data` with your actual printer data path if different.
    - Adjust retry settings if needed
 
 2. **AFC_AMS1.cfg**:
-   - Map lanes to your specific AMS unit slots
+   - Map lanes to your specific AMS unit slots *preconfigured for T0-T3
    - Set LED indices if using LED indicators
-   - Configure hub settings and bowden lengths
+   - Configure hub settings and bowden lengths *will be done later with auto configuration*
 
 3. **Include in printer.cfg**:
    ```ini
