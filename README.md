@@ -710,6 +710,6 @@ If you're still experiencing issues:
 
 ## Credits
 
-This project was created by **knight.rad_iant** on Discord.
+This project was created by **knight.rad_iant** and **Armored Turtle Team** on Discord.
 
 Based on the original OpenAMS project with enhancements for AFC integration, retry logic, clog detection, and Spoolman LED synchronization.
