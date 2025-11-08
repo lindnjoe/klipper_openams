@@ -1,3 +1,6 @@
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/a2558a4a-9802-4798-aacf-efd5ea3a66d8" />
+
+
 # OpenAMS for Klipper
 
 A Klipper integration for OpenAMS that enables multi-material printing with automatic filament management, runout detection, and intelligent retry logic.
