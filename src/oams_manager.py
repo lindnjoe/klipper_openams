@@ -326,7 +326,7 @@ class FPSState:
             self.stuck_spool_restore_follower = False
             self.stuck_spool_restore_direction = 1
 
-    def reset_clog_tracker(self) -> None:
+    def reset_clog_tracker(self, preserve_restore: bool = False) -> None:
         self.clog_active = False
         self.clog_start_extruder = None
         self.clog_start_encoder = None
@@ -334,8 +334,9 @@ class FPSState:
         self.clog_min_pressure = None
         self.clog_max_pressure = None
         self.clog_last_extruder = None
-        self.clog_restore_follower = False
-        self.clog_restore_direction = 1
+        if not preserve_restore:
+            self.clog_restore_follower = False
+            self.clog_restore_direction = 1
 
     def prime_clog_tracker(self, extruder_pos: float, encoder_clicks: int, pressure: float, timestamp: float) -> None:
         self.clog_start_extruder = extruder_pos
@@ -546,6 +547,7 @@ class OAMSManager:
         for fps_state in self.current_state.fps_state.values():
             fps_state.clear_encoder_samples()
             fps_state.reset_stuck_spool_state()
+            fps_state.reset_clog_tracker()
             self._cancel_post_load_pressure_check(fps_state)
 
         for oam in self.oams.values():
@@ -1309,9 +1311,9 @@ class OAMSManager:
                 fps_state.reset_stuck_spool_state(preserve_restore=True)
                 self.logger.info("Cleared stuck spool state for %s on print resume", fps_name)
             
-            # Clear clog_active on resume and reset tracker
+            # Clear clog_active on resume and reset tracker (preserve restore flags for follower)
             if fps_state.clog_active:
-                fps_state.reset_clog_tracker()
+                fps_state.reset_clog_tracker(preserve_restore=True)
                 self.logger.info("Cleared clog state for %s on print resume", fps_name)
                 # Clear the error LED if we have an OAMS and spool index
                 if oams is not None and fps_state.current_spool_idx is not None:
@@ -1807,3 +1809,4 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
+
