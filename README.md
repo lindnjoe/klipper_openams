@@ -149,6 +149,64 @@ Infinite spooling no longer requires filament groups to be configured in OpenAMS
 
 To enable the optional Mainsail AFC panel, extract the included `mainsail.zip` archive into your Mainsail installation directory. Before extracting, back up and remove the existing contents of that directory to ensure the new panel files replace the previous version cleanly.
 
+Optional: Spoolman LED Sync
+The Spoolman LED sync feature allows the OpenAMS active tool LED to display the actual filament color from Spoolman instead of the default blue color. This optional module requires AFC and Spoolman integration to be active.
+
+**Features:**
+- Automatically reads filament color from Spoolman via AFC
+- Sets the active tool LED to match the actual filament color
+- Falls back to a configurable default color if Spoolman data is not available
+- Error states (stuck spool, clog) still override with red flashing
+- Non-active lanes continue to use their normal AFC LED colors
+
+**Setup:**
+
+1. Copy the Spoolman LED sync configuration file to your AFC configuration directory:
+
+```bash
+cp spoolman_led_sync.cfg <printer_data path>/config/AFC/
+```
+
+Replace `<printer_data path>` with the full path to your Klipper `printer_data` directory. On most installations this will be `~/printer_data`.
+
+2. Include the configuration file in your `printer.cfg` by adding this line in the configuration includes section:
+
+```ini
+[include AFC/spoolman_led_sync.cfg]
+```
+
+3. Edit the `spoolman_led_sync.cfg` file and set `enable: True` to activate the feature:
+
+```ini
+[spoolman_led_sync]
+enable: True
+```
+
+4. Optionally customize the default LED color for lanes without Spoolman data:
+
+```ini
+[spoolman_led_sync]
+enable: True
+default_color: 0000FF  # Blue (default)
+```
+
+Common color examples:
+- White: `FFFFFF`
+- Red: `FF0000`
+- Green: `00FF00`
+- Yellow: `FFFF00`
+- Purple: `FF00FF`
+- Cyan: `00FFFF`
+- Orange: `FFA500`
+
+5. Restart Klipper to load the new configuration:
+
+```
+FIRMWARE_RESTART
+```
+
+To disable the feature later, set `enable: False` in the configuration file and restart Klipper.
+
 Initial Calibration
 After completing the OpenAMS and AFC installation, calibrate each OpenAMS unit to ensure accurate filament detection and optimal performance. The AFC system provides the calibration tools needed for this process.
 
