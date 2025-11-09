@@ -1,15 +1,28 @@
 """
 OpenAMS Spoolman LED Sync Module
 
-Optional module that sets the ACTIVE TOOL LED to match Spoolman filament color
-instead of the default blue color. Non-active lanes use their normal AFC colors.
+Optional module that sets lane LED colors to match Spoolman filament color
+or custom configured colors. Supports all LED states including active tool,
+ready, not ready, loading, unloading, fault, etc.
 
 Requires AFC and Spoolman integration to be active.
 
 Configuration:
 [spoolman_led_sync]
 enable: True  # Set to False to disable
-default_color: 0000FF  # Hex color for lanes without Spoolman data (default: blue)
+
+# LED Color Settings (all optional, default to AFC's configured colors)
+# Format: RRGGBB (6-digit hex without # prefix)
+# When Spoolman data is available, filament color overrides these for loaded states
+
+default_color: 0000FF        # Active tool without Spoolman data (default: blue)
+ready_color:                 # Lane ready (filament at load sensor) - uses Spoolman color or this
+not_ready_color:             # Lane without filament
+loading_color:               # Lane loading filament
+prep_loaded_color:           # Lane prep sensor loaded
+unloading_color:             # Lane unloading filament
+fault_color:                 # Lane fault state
+tool_loaded_idle_color:      # Tool loaded but idle
 """
 
 import logging
@@ -22,7 +35,16 @@ class SpoolmanLEDSync:
 
         # Configuration
         self.enabled = config.getboolean('enable', False)
-        self.default_color = config.get('default_color', '0000FF')
+
+        # LED color overrides (None means use AFC's default)
+        self.default_color = config.get('default_color', '0000FF')  # Tool loaded fallback
+        self.ready_color = config.get('ready_color', None)
+        self.not_ready_color = config.get('not_ready_color', None)
+        self.loading_color = config.get('loading_color', None)
+        self.prep_loaded_color = config.get('prep_loaded_color', None)
+        self.unloading_color = config.get('unloading_color', None)
+        self.fault_color = config.get('fault_color', None)
+        self.tool_loaded_idle_color = config.get('tool_loaded_idle_color', None)
 
         if not self.enabled:
             self.logger.info("Spoolman LED sync disabled")
@@ -58,9 +80,14 @@ class SpoolmanLEDSync:
 
             self.logger.info("AFC has function attribute, attempting hook...")
 
-            # Register for toolhead activation events
-            # AFC calls handle_activate_extruder when lanes change
+            # Hook the main afc_led function to intercept ALL LED changes
+            self._hook_afc_led_function()
+
+            # Also hook unit methods for additional context
             self._hook_into_afc()
+
+            # Fix any incorrect LED states on startup
+            self._fix_startup_led_states()
 
             self.logger.info("Hook complete, module fully initialized")
 
@@ -68,10 +95,174 @@ class SpoolmanLEDSync:
             self.logger.exception("Failed to hook into AFC")
             self.enabled = False
 
+    def _fix_startup_led_states(self):
+        """
+        Fix LED states on startup based on actual sensor readings.
+        This corrects the issue where FPS sensors used as toolhead sensors
+        show incorrect state until first filament load/unload.
+        """
+        try:
+            self.logger.info("Checking sensor states to fix startup LED display...")
+
+            # Get all AFC extruders
+            if not hasattr(self.afc, 'tools'):
+                self.logger.warning("No AFC tools found to check")
+                return
+
+            corrections_made = 0
+
+            for extruder_name, extruder_obj in self.afc.tools.items():
+                try:
+                    # Check if this extruder has a toolhead sensor (tool_start)
+                    if not hasattr(extruder_obj, 'fila_tool_start') or extruder_obj.fila_tool_start is None:
+                        continue
+
+                    # Read actual sensor state
+                    actual_sensor_state = extruder_obj.fila_tool_start.runout_helper.filament_present
+
+                    # Check if a lane is loaded to this extruder
+                    if not hasattr(extruder_obj, 'lane_loaded') or not extruder_obj.lane_loaded:
+                        # No lane loaded, sensor should show clear
+                        if actual_sensor_state:
+                            # Sensor shows filament but no lane loaded - this is the bug!
+                            self.logger.warning("%s: Sensor shows filament present but no lane loaded - "
+                                              "this is expected on startup with FPS sensors", extruder_name)
+                        continue
+
+                    # Get the loaded lane
+                    lane_name = extruder_obj.lane_loaded
+                    if lane_name not in self.afc.lanes:
+                        continue
+
+                    lane = self.afc.lanes[lane_name]
+
+                    # Check lane state vs sensor state
+                    # If lane thinks it has filament but sensor says no, fix the LED
+                    if hasattr(lane, 'prep_state') and lane.prep_state:
+                        if not actual_sensor_state:
+                            # Lane thinks filament is present, but sensor disagrees
+                            self.logger.info("%s (lane %s): Correcting LED - lane shows loaded but sensor is clear",
+                                           extruder_name, lane_name)
+
+                            # Set LED to not_ready state
+                            if hasattr(lane, 'led_index') and lane.led_index is not None:
+                                # Determine what color to use for not_ready
+                                if self.not_ready_color:
+                                    led_color = self._hex_to_led_string(self.not_ready_color)
+                                elif hasattr(lane, 'led_not_ready'):
+                                    led_color = lane.led_not_ready
+                                else:
+                                    led_color = self.afc.led_not_ready if hasattr(self.afc, 'led_not_ready') else None
+
+                                if led_color:
+                                    self.afc.function.afc_led(led_color, lane.led_index)
+                                    corrections_made += 1
+
+                except Exception as e:
+                    self.logger.error("Error checking extruder %s: %s", extruder_name, e)
+
+            if corrections_made > 0:
+                self.logger.info("Fixed %d incorrect LED state(s) on startup", corrections_made)
+            else:
+                self.logger.info("All LED states correct on startup")
+
+        except Exception as e:
+            self.logger.exception("Error fixing startup LED states: %s", e)
+
+    def _hook_afc_led_function(self):
+        """Hook the main afc_led function to intercept all LED color changes"""
+        try:
+            original_afc_led = self.afc.function.afc_led
+
+            def wrapped_afc_led(status, index):
+                """Intercept LED changes and apply custom colors if configured"""
+                # Try to find which lane this LED belongs to
+                lane = self._find_lane_by_led_index(index)
+
+                if lane:
+                    # Check if we should override this color
+                    new_status = self._get_override_color(status, lane)
+                    if new_status is not None:
+                        self.logger.debug("Overriding LED color for %s index %s: %s -> %s",
+                                        lane.name, index, status, new_status)
+                        status = new_status
+
+                # Call original function with potentially modified color
+                return original_afc_led(status, index)
+
+            self.afc.function.afc_led = wrapped_afc_led
+            self.logger.info("Successfully hooked afc_led function")
+
+        except Exception as e:
+            self.logger.exception("Failed to hook afc_led function: %s", e)
+
+    def _find_lane_by_led_index(self, index):
+        """Find the lane that owns this LED index"""
+        if not hasattr(self.afc, 'lanes'):
+            return None
+
+        for lane in self.afc.lanes.values():
+            if hasattr(lane, 'led_index') and lane.led_index == index:
+                return lane
+        return None
+
+    def _get_override_color(self, original_color, lane):
+        """
+        Determine if we should override the color based on our configuration.
+        Returns the override color string, or None if no override should happen.
+        """
+        # Match the original color to see what state is being set
+        # and check if we have a custom color configured for that state
+
+        # Check for Spoolman color for ready/loaded states
+        spoolman_color = self._get_lane_color(lane)
+        if spoolman_color:
+            spoolman_led_str = self._hex_to_led_string(spoolman_color)
+
+            # If setting tool_loaded color and we have Spoolman data, use it
+            if (hasattr(lane, 'led_tool_loaded') and original_color == lane.led_tool_loaded):
+                return spoolman_led_str
+
+            # If setting ready color and we don't have a custom ready_color configured, use Spoolman
+            if (hasattr(lane, 'led_ready') and original_color == lane.led_ready and
+                self.ready_color is None):
+                return spoolman_led_str
+
+        # Check for custom color overrides
+        if self.ready_color and hasattr(lane, 'led_ready') and original_color == lane.led_ready:
+            return self._hex_to_led_string(self.ready_color)
+
+        if self.not_ready_color and hasattr(lane, 'led_not_ready') and original_color == lane.led_not_ready:
+            return self._hex_to_led_string(self.not_ready_color)
+
+        if self.loading_color and hasattr(lane, 'led_loading') and original_color == lane.led_loading:
+            return self._hex_to_led_string(self.loading_color)
+
+        if self.prep_loaded_color and hasattr(lane, 'led_prep_loaded') and original_color == lane.led_prep_loaded:
+            return self._hex_to_led_string(self.prep_loaded_color)
+
+        if self.unloading_color and hasattr(lane, 'led_unloading') and original_color == lane.led_unloading:
+            return self._hex_to_led_string(self.unloading_color)
+
+        if self.fault_color and hasattr(lane, 'led_fault') and original_color == lane.led_fault:
+            return self._hex_to_led_string(self.fault_color)
+
+        if self.tool_loaded_idle_color and hasattr(lane, 'led_tool_loaded_idle') and original_color == lane.led_tool_loaded_idle:
+            return self._hex_to_led_string(self.tool_loaded_idle_color)
+
+        # Also check AFC global colors
+        if self.not_ready_color and hasattr(self.afc, 'led_not_ready') and original_color == self.afc.led_not_ready:
+            return self._hex_to_led_string(self.not_ready_color)
+
+        if self.fault_color and hasattr(self.afc, 'led_fault') and original_color == self.afc.led_fault:
+            return self._hex_to_led_string(self.fault_color)
+
+        return None
+
     def _hook_into_afc(self):
         """
-        Hook into AFC's lane activation system without modifying AFC code.
-        We wrap each unit's lane_tool_loaded function to override LED color.
+        Hook into AFC's lane LED system without modifying AFC code.
+        We wrap multiple unit LED functions to override colors.
         """
         try:
             # Check if AFC has units
@@ -86,32 +277,39 @@ class SpoolmanLEDSync:
                 self.logger.warning("No units registered in AFC yet - cannot hook")
                 return
 
-            # Hook into each unit's lane_tool_loaded method
+            # Hook into each unit's LED methods
             units_hooked = 0
             for unit_name, unit_obj in self.afc.units.items():
                 try:
                     self.logger.info("Attempting to hook unit: %s", unit_name)
-                    original_lane_tool_loaded = unit_obj.lane_tool_loaded
 
-                    def make_wrapped_lane_tool_loaded(original_func, unit_name):
-                        """Create a wrapper with closure over original function"""
-                        def wrapped_lane_tool_loaded(lane):
-                            # Check if lane has Spoolman color
-                            hex_color = self._get_lane_color(lane)
-                            if hex_color and hex_color != self.default_color:
-                                # Use Spoolman color instead of default blue
-                                led_color_str = self._hex_to_led_string(hex_color)
-                                self.logger.info("Setting active tool %s LED to Spoolman color %s",
-                                               lane.name, hex_color)
-                                self.afc.function.afc_led(led_color_str, lane.led_index)
-                            else:
-                                # No Spoolman color, use default behavior
-                                original_func(lane)
-                        return wrapped_lane_tool_loaded
+                    # Hook lane_tool_loaded
+                    if hasattr(unit_obj, 'lane_tool_loaded'):
+                        original_lane_tool_loaded = unit_obj.lane_tool_loaded
+                        unit_obj.lane_tool_loaded = self._make_wrapped_lane_tool_loaded(original_lane_tool_loaded)
 
-                    unit_obj.lane_tool_loaded = make_wrapped_lane_tool_loaded(original_lane_tool_loaded, unit_name)
+                    # Hook lane_loaded (ready state)
+                    if hasattr(unit_obj, 'lane_loaded'):
+                        original_lane_loaded = unit_obj.lane_loaded
+                        unit_obj.lane_loaded = self._make_wrapped_lane_loaded(original_lane_loaded)
+
+                    # Hook lane_tool_unloaded (goes to ready state)
+                    if hasattr(unit_obj, 'lane_tool_unloaded'):
+                        original_lane_tool_unloaded = unit_obj.lane_tool_unloaded
+                        unit_obj.lane_tool_unloaded = self._make_wrapped_lane_tool_unloaded(original_lane_tool_unloaded)
+
+                    # Hook lane_unloaded (not ready state)
+                    if hasattr(unit_obj, 'lane_unloaded'):
+                        original_lane_unloaded = unit_obj.lane_unloaded
+                        unit_obj.lane_unloaded = self._make_wrapped_lane_unloaded(original_lane_unloaded)
+
+                    # Hook lane_loading
+                    if hasattr(unit_obj, 'lane_loading'):
+                        original_lane_loading = unit_obj.lane_loading
+                        unit_obj.lane_loading = self._make_wrapped_lane_loading(original_lane_loading)
+
                     units_hooked += 1
-                    self.logger.info("Successfully hooked lane_tool_loaded for unit: %s", unit_name)
+                    self.logger.info("Successfully hooked LED functions for unit: %s", unit_name)
                 except Exception as e:
                     self.logger.error("Failed to hook unit %s: %s", unit_name, e)
 
@@ -119,6 +317,74 @@ class SpoolmanLEDSync:
 
         except Exception as e:
             self.logger.exception("Failed to hook into AFC units: %s", e)
+
+    def _make_wrapped_lane_tool_loaded(self, original_func):
+        """Wrapper for lane_tool_loaded - active tool with Spoolman color or default"""
+        def wrapped(lane):
+            hex_color = self._get_lane_color(lane)
+            if hex_color and hex_color != self.default_color:
+                # Use Spoolman color
+                led_color_str = self._hex_to_led_string(hex_color)
+                self.logger.info("Setting active tool %s LED to Spoolman color %s", lane.name, hex_color)
+                self.afc.function.afc_led(led_color_str, lane.led_index)
+            else:
+                # Use configured default or AFC default
+                original_func(lane)
+        return wrapped
+
+    def _make_wrapped_lane_loaded(self, original_func):
+        """Wrapper for lane_loaded - ready state, can use Spoolman color or custom ready color"""
+        def wrapped(lane):
+            # Try Spoolman color first if configured to use it
+            hex_color = self._get_lane_color(lane) if self.ready_color is None else None
+
+            if hex_color and hex_color != self.default_color:
+                # Use Spoolman color for ready state
+                led_color_str = self._hex_to_led_string(hex_color)
+                self.logger.debug("Setting ready lane %s LED to Spoolman color %s", lane.name, hex_color)
+                self.afc.function.afc_led(led_color_str, lane.led_index)
+            elif self.ready_color:
+                # Use custom ready color
+                led_color_str = self._hex_to_led_string(self.ready_color)
+                self.logger.debug("Setting ready lane %s LED to custom color %s", lane.name, self.ready_color)
+                self.afc.function.afc_led(led_color_str, lane.led_index)
+            else:
+                # Use AFC default
+                original_func(lane)
+        return wrapped
+
+    def _make_wrapped_lane_tool_unloaded(self, original_func):
+        """Wrapper for lane_tool_unloaded - back to ready state"""
+        def wrapped(lane):
+            if self.ready_color:
+                led_color_str = self._hex_to_led_string(self.ready_color)
+                self.logger.debug("Setting unloaded tool lane %s LED to ready color %s", lane.name, self.ready_color)
+                self.afc.function.afc_led(led_color_str, lane.led_index)
+            else:
+                original_func(lane)
+        return wrapped
+
+    def _make_wrapped_lane_unloaded(self, original_func):
+        """Wrapper for lane_unloaded - not ready state"""
+        def wrapped(lane):
+            if self.not_ready_color:
+                led_color_str = self._hex_to_led_string(self.not_ready_color)
+                self.logger.debug("Setting unloaded lane %s LED to not ready color %s", lane.name, self.not_ready_color)
+                self.afc.function.afc_led(led_color_str, lane.led_index)
+            else:
+                original_func(lane)
+        return wrapped
+
+    def _make_wrapped_lane_loading(self, original_func):
+        """Wrapper for lane_loading"""
+        def wrapped(lane):
+            if self.loading_color:
+                led_color_str = self._hex_to_led_string(self.loading_color)
+                self.logger.debug("Setting loading lane %s LED to loading color %s", lane.name, self.loading_color)
+                self.afc.function.afc_led(led_color_str, lane.led_index)
+            else:
+                original_func(lane)
+        return wrapped
 
     def _update_lane_leds(self):
         """Update LEDs for all lanes based on Spoolman colors"""
