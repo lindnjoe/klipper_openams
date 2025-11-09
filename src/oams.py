@@ -1,11 +1,9 @@
-# OpenAMS Mainboard (OPTIMIZED) - FIXED VERSION
+# OpenAMS Mainboard
 #
 # Copyright (C) 2025 JR Lomas <lomas.jr@gmail.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
-# FIX: Added last_load_was_retry() method to prevent false positive clog detection
-#      after successful load retries
 
 import logging
 import mcu
@@ -271,10 +269,19 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         
     def determine_current_spool(self):
         params = self.oams_spool_query_spool_cmd.send()
-        if params is not None and "spool" in params:
-            spool_val = params["spool"]
-            if 0 <= spool_val <= 3:
-                return spool_val
+        if params is None:
+            logging.warning("OAMS[%d]: Failed to query current spool - no response from MCU", self.oams_idx)
+            return None
+
+        if "spool" not in params:
+            logging.warning("OAMS[%d]: Spool query response missing 'spool' field", self.oams_idx)
+            return None
+
+        spool_val = params["spool"]
+        if 0 <= spool_val <= 3:
+            return spool_val
+
+        logging.error("OAMS[%d]: Hardware reported invalid spool index %d (expected 0-3)", self.oams_idx, spool_val)
         return None
         
 
@@ -361,6 +368,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def load_spool_with_retry(self, spool_idx: int) -> Tuple[bool, str]:
         """Load spool with automatic retry on failure."""
         retry_count = self._load_retry_count.get(spool_idx, 0)
+        attempt_history = []  # Track failure reasons for diagnostic context
 
         # Use a loop instead of recursion to prevent monitor state issues
         while retry_count < self.load_retry_max:
@@ -398,7 +406,9 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 )
                 return True, message
 
-            # Load failed
+            # Load failed - record attempt in history
+            attempt_history.append(f"Attempt {retry_count + 1}: {message}")
+
             if retry_count + 1 < self.load_retry_max:
                 logging.warning(
                     "OAMS[%d]: Load failed for spool %d: %s. Attempt %d/%d",
@@ -439,8 +449,12 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         # Record retry failure for monitoring
         self._load_retry_failures += 1
         self._last_load_failure_time = self.reactor.monotonic()
+
+        # Build detailed error message with attempt history
+        history_str = "; ".join(attempt_history) if attempt_history else message
         return False, (
-            f"Failed to load spool {spool_idx} after {self.load_retry_max} attempts: {message}"
+            f"Failed to load spool {spool_idx} after {self.load_retry_max} attempts. "
+            f"Attempt history: {history_str}"
         )
 
     def get_last_load_attempt_time(self, spool_idx: int) -> Optional[float]:
@@ -463,6 +477,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
     def unload_spool_with_retry(self) -> Tuple[bool, str]:
         """Unload spool with automatic retry on failure."""
+        attempt_history = []  # Track failure reasons for diagnostic context
+
         # Use a loop instead of recursion to prevent monitor state issues
         while self._unload_retry_count < self.unload_retry_max:
             if self._unload_retry_count > 0:
@@ -491,7 +507,9 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 )
                 return True, message
 
-            # Unload failed
+            # Unload failed - record attempt in history
+            attempt_history.append(f"Attempt {self._unload_retry_count}: {message}")
+
             if self._unload_retry_count < self.unload_retry_max:
                 logging.warning(
                     "OAMS[%d]: Unload failed: %s. Attempt %d/%d",
@@ -509,7 +527,13 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         # Record retry failure for monitoring
         self._unload_retry_failures += 1
         self._last_unload_failure_time = self.reactor.monotonic()
-        return False, f"Failed to unload after {self.unload_retry_max} attempts: {message}"
+
+        # Build detailed error message with attempt history
+        history_str = "; ".join(attempt_history) if attempt_history else message
+        return False, (
+            f"Failed to unload after {self.unload_retry_max} attempts. "
+            f"Attempt history: {history_str}"
+        )
 
     cmd_OAMS_CURRENT_PID_SET_help = "Set the PID values for the current sensor"
     def cmd_OAMS_CURRENT_PID_SET(self, gcmd):
@@ -622,7 +646,13 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def load_spool(self, spool_idx):
         self.action_status = OAMSStatus.LOADING
         self.oams_load_spool_cmd.send([spool_idx])
+        timeout = self.reactor.monotonic() + 30.0  # 30 second timeout
         while self.action_status is not None:
+            if self.reactor.monotonic() > timeout:
+                logging.error("OAMS[%d]: Load operation timed out after 30 seconds", self.oams_idx)
+                self.action_status = None
+                self.action_status_code = OAMSOpCode.ERROR_UNSPECIFIED
+                return False, "OAMS load operation timed out (MCU unresponsive)"
             self.reactor.pause(self.reactor.monotonic() + 0.1)
         if self.action_status_code == OAMSOpCode.SUCCESS:
             self.current_spool = spool_idx
@@ -654,7 +684,13 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def unload_spool(self):
         self.action_status = OAMSStatus.UNLOADING
         self.oams_unload_spool_cmd.send()
+        timeout = self.reactor.monotonic() + 30.0  # 30 second timeout
         while self.action_status is not None:
+            if self.reactor.monotonic() > timeout:
+                logging.error("OAMS[%d]: Unload operation timed out after 30 seconds", self.oams_idx)
+                self.action_status = None
+                self.action_status_code = OAMSOpCode.ERROR_UNSPECIFIED
+                return False, "OAMS unload operation timed out (MCU unresponsive)"
             self.reactor.pause(self.reactor.monotonic() + 0.1)
         if self.action_status_code == OAMSOpCode.SUCCESS:
             self.current_spool = None
@@ -819,3 +855,4 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
+
