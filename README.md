@@ -1,4 +1,4 @@
-<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/a2558a4a-9802-4798-aacf-efd5ea3a66d8" />
+[<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/a2558a4a-9802-4798-aacf-efd5ea3a66d8" />](https://chatgpt.com/backend-api/estuary/content?id=file_00000000136c722f8107cec3fd13d05d&ts=489632&p=fs&cid=1&sig=05940d5fc3f42b78948de0ef2f8f3c640273ea7d0ff55594851047e21e59ea09&v=0)
 
 
 # OpenAMS for Klipper
