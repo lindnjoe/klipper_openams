@@ -86,88 +86,11 @@ class SpoolmanLEDSync:
             # Also hook unit methods for additional context
             self._hook_into_afc()
 
-            # Fix any incorrect LED states on startup
-            self._fix_startup_led_states()
-
             self.logger.info("Hook complete, module fully initialized")
 
         except Exception as e:
             self.logger.exception("Failed to hook into AFC")
             self.enabled = False
-
-    def _fix_startup_led_states(self):
-        """
-        Fix LED states on startup based on actual sensor readings.
-        This corrects the issue where FPS sensors used as toolhead sensors
-        show incorrect state until first filament load/unload.
-        """
-        try:
-            self.logger.info("Checking sensor states to fix startup LED display...")
-
-            # Get all AFC extruders
-            if not hasattr(self.afc, 'tools'):
-                self.logger.warning("No AFC tools found to check")
-                return
-
-            corrections_made = 0
-
-            for extruder_name, extruder_obj in self.afc.tools.items():
-                try:
-                    # Check if this extruder has a toolhead sensor (tool_start)
-                    if not hasattr(extruder_obj, 'fila_tool_start') or extruder_obj.fila_tool_start is None:
-                        continue
-
-                    # Read actual sensor state
-                    actual_sensor_state = extruder_obj.fila_tool_start.runout_helper.filament_present
-
-                    # Check if a lane is loaded to this extruder
-                    if not hasattr(extruder_obj, 'lane_loaded') or not extruder_obj.lane_loaded:
-                        # No lane loaded, sensor should show clear
-                        if actual_sensor_state:
-                            # Sensor shows filament but no lane loaded - this is the bug!
-                            self.logger.warning("%s: Sensor shows filament present but no lane loaded - "
-                                              "this is expected on startup with FPS sensors", extruder_name)
-                        continue
-
-                    # Get the loaded lane
-                    lane_name = extruder_obj.lane_loaded
-                    if lane_name not in self.afc.lanes:
-                        continue
-
-                    lane = self.afc.lanes[lane_name]
-
-                    # Check lane state vs sensor state
-                    # If lane thinks it has filament but sensor says no, fix the LED
-                    if hasattr(lane, 'prep_state') and lane.prep_state:
-                        if not actual_sensor_state:
-                            # Lane thinks filament is present, but sensor disagrees
-                            self.logger.info("%s (lane %s): Correcting LED - lane shows loaded but sensor is clear",
-                                           extruder_name, lane_name)
-
-                            # Set LED to not_ready state
-                            if hasattr(lane, 'led_index') and lane.led_index is not None:
-                                # Determine what color to use for not_ready
-                                if self.not_ready_color:
-                                    led_color = self._hex_to_led_string(self.not_ready_color)
-                                elif hasattr(lane, 'led_not_ready'):
-                                    led_color = lane.led_not_ready
-                                else:
-                                    led_color = self.afc.led_not_ready if hasattr(self.afc, 'led_not_ready') else None
-
-                                if led_color:
-                                    self.afc.function.afc_led(led_color, lane.led_index)
-                                    corrections_made += 1
-
-                except Exception as e:
-                    self.logger.error("Error checking extruder %s: %s", extruder_name, e)
-
-            if corrections_made > 0:
-                self.logger.info("Fixed %d incorrect LED state(s) on startup", corrections_made)
-            else:
-                self.logger.info("All LED states correct on startup")
-
-        except Exception as e:
-            self.logger.exception("Error fixing startup LED states: %s", e)
 
     def _hook_afc_led_function(self):
         """Hook the main afc_led function to intercept all LED color changes"""
@@ -494,4 +417,5 @@ class SpoolmanLEDSync:
             return "0,0,1,0"  # Blue fallback
 
 def load_config(config):
+    return SpoolmanLEDSync(config.get_printer(), config)
     return SpoolmanLEDSync(config.get_printer(), config)
