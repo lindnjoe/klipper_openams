@@ -142,9 +142,10 @@ class SpoolmanLEDSync:
         if spoolman_color:
             spoolman_led_str = self._hex_to_led_string(spoolman_color)
 
-            # If setting tool_loaded color and we have Spoolman data, use it
+            # If setting tool_loaded color and we have Spoolman data, use it ONLY if active extruder
             if (hasattr(lane, 'led_tool_loaded') and original_color == lane.led_tool_loaded):
-                return spoolman_led_str
+                if self._is_active_extruder(lane):
+                    return spoolman_led_str
 
             # If setting ready color and we don't have a custom ready_color configured, use Spoolman
             if (hasattr(lane, 'led_ready') and original_color == lane.led_ready and
