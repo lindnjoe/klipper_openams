@@ -277,7 +277,7 @@ After AFC installation, copy the OpenAMS-specific configuration files to your AF
 
 ```bash
 cp AFC_Oams.cfg ~/printer_data/config/AFC/
-cp AFC_Oams_Macros.cfg ~/printer_data/config/AFC/
+cp AFC_Oams_Smart_Purge_Temp_Macros.cfg ~/printer_data/config/AFC/
 ```
 
 Replace `~/printer_data` with your actual printer data path if different.
@@ -288,8 +288,7 @@ Replace `~/printer_data` with your actual printer data path if different.
 |------|---------|------------|
 | `AFC_AMS1.cfg` | Defines AFC lanes mapped to OpenAMS slots | Yes - configure for your setup |
 | `AFC_Oams.cfg` | OpenAMS hardware configuration (MCU, sensors, etc.) | Yes - set CAN UUIDs and calibration values |
-| `AFC_Oams_Macros.cfg` | Standard load/unload macros | Yes - customize for your workflow |
-| `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Advanced temperature-aware macros | Optional - see below |
+| `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Load/unload macros with optional smart temperature control (disabled by default) | Yes - customize for your workflow |
 
 **Editing Configuration Files:**
 
@@ -306,19 +305,32 @@ Replace `~/printer_data` with your actual printer data path if different.
 3. **Include in printer.cfg or if copied to the AFC folder they will automatically be included**:
    ```ini
    [include AFC/AFC_Oams.cfg]
-   [include AFC/AFC_Oams_Macros.cfg]
+   [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]
    ```
 
 ### Smart Temperature Purge Macros
 
-For advanced multi-material printing with intelligent temperature management, use the smart purge macros instead of the standard macros:
+The macros include intelligent temperature management for multi-material printing. **By default, smart temperature is disabled**, allowing you full manual control over temperatures.
 
-```bash
-cp AFC_Oams.cfg ~/printer_data/config/AFC/
-cp AFC_Oams_Smart_Purge_Temp_Macros.cfg ~/printer_data/config/AFC/AFC_Oams_Macros.cfg
+**Smart Temperature Toggle:**
+
+To enable or disable smart temperature management, edit `AFC_Oams_Smart_Purge_Temp_Macros.cfg`:
+
+```ini
+[gcode_macro _oams_smart_temp_settings]
+# Enable or disable smart temperature adjustment during load/unload
+# When enabled: Uses lane-specific temps and calculates optimal purge temps
+# When disabled: Uses current extruder temperature without any changes
+#                (allows you to manually control temperature)
+# Default: False
+variable_enable_smart_temp: False  # Set to True to enable
+gcode:
+    # This macro just holds variables, no gcode needed
 ```
 
-**How Smart Purge Works:**
+Restart Klipper after making changes: `FIRMWARE_RESTART`
+
+**How Smart Purge Works (When Enabled):**
 
 The smart purge macros automatically manage temperatures during tool changes:
 
@@ -353,7 +365,9 @@ extruder_temp: 250    # PETG temperature
 # ... other settings ...
 ```
 
-**Important:** Smart purge macros leave the heater at the purge temperature when finished. Your print start G-code or slicer must set the final temperature for the active tool.
+**Important:**
+- Smart temperature is **disabled by default**
+- When enabled, smart purge macros leave the heater at the purge temperature when finished. Your print start G-code or slicer must set the final temperature for the active tool
 
 ### AFC Hardware Configuration
 
