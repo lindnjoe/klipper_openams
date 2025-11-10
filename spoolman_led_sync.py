@@ -244,16 +244,46 @@ class SpoolmanLEDSync:
     def _make_wrapped_lane_tool_loaded(self, original_func):
         """Wrapper for lane_tool_loaded - active tool with Spoolman color or default"""
         def wrapped(lane):
-            hex_color = self._get_lane_color(lane)
-            if hex_color and hex_color != self.default_color:
-                # Use Spoolman color
-                led_color_str = self._hex_to_led_string(hex_color)
-                self.logger.info("Setting active tool %s LED to Spoolman color %s", lane.name, hex_color)
-                self.afc.function.afc_led(led_color_str, lane.led_index)
-            else:
-                # Use configured default or AFC default
-                original_func(lane)
+            # Only apply Spoolman color if this lane is for the ACTIVE extruder
+            if self._is_active_extruder(lane):
+                hex_color = self._get_lane_color(lane)
+                if hex_color and hex_color != self.default_color:
+                    # Use Spoolman color for active tool
+                    led_color_str = self._hex_to_led_string(hex_color)
+                    self.logger.info("Setting active tool %s LED to Spoolman color %s", lane.name, hex_color)
+                    self.afc.function.afc_led(led_color_str, lane.led_index)
+                    return
+
+            # Not active extruder, or no Spoolman color - use default behavior
+            original_func(lane)
         return wrapped
+
+    def _is_active_extruder(self, lane):
+        """Check if this lane's extruder is the currently active extruder"""
+        try:
+            # Get the toolhead's current extruder
+            toolhead = self.printer.lookup_object('toolhead')
+            active_extruder = toolhead.get_extruder()
+
+            # Check if lane has an extruder object
+            if not hasattr(lane, 'extruder_obj') or lane.extruder_obj is None:
+                return False
+
+            # Compare the lane's extruder with the active extruder
+            # They might be the same object or have the same name
+            if lane.extruder_obj == active_extruder:
+                return True
+
+            # Also check by name as a fallback
+            if hasattr(lane.extruder_obj, 'name') and hasattr(active_extruder, 'name'):
+                return lane.extruder_obj.name == active_extruder.name
+
+            return False
+
+        except Exception as e:
+            self.logger.debug("Error checking active extruder: %s", e)
+            # If we can't determine, assume it's not active to be safe
+            return False
 
     def _make_wrapped_lane_loaded(self, original_func):
         """Wrapper for lane_loaded - ready state, can use Spoolman color or custom ready color"""
@@ -417,5 +447,4 @@ class SpoolmanLEDSync:
             return "0,0,1,0"  # Blue fallback
 
 def load_config(config):
-    return SpoolmanLEDSync(config.get_printer(), config)
     return SpoolmanLEDSync(config.get_printer(), config)
