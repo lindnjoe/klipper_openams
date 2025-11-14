@@ -370,13 +370,25 @@ Replace `~/printer_data` with your actual printer data path if different.
    - **AFC_Oams_Macros.cfg**: Basic macros for load/unload using lane parameters
    - **AFC_Oams_Smart_Purge_Temp_Macros.cfg**: Enhanced macros with optional temperature management
 
-4. **Include in printer.cfg** (or AFC auto-includes them if in AFC folder):
+4. **Include in printer.cfg**:
+
+   **⚠️ CRITICAL: Configuration Loading Order**
+
+   The `[AFC_OpenAMS ...]` section **MUST** be loaded **BEFORE** the `[AFC_extruder extruder]` section, or you'll get a `"Pin 'AMS_extruder' is not a valid pin name"` error. Ensure your includes are in this order:
+
    ```ini
-   [include AFC/AFC_Oams.cfg]
-   [include AFC/AFC_Oams_Macros.cfg]
-   # OR use smart purge macros instead:
-   # [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]
+   # ✅ CORRECT ORDER - AFC_OpenAMS loads first to register virtual pin handler
+   [include AFC/AFC_AMS_1.cfg]        # Contains [AFC_OpenAMS AMS_1] - MUST BE FIRST
+   [include AFC/AFC_Oams.cfg]          # OpenAMS hardware config
+   [include AFC/AFC_Hardware.cfg]      # Contains [AFC_extruder extruder] - MUST BE AFTER AMS_1
+   [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]  # Or AFC_Oams_Macros.cfg
    ```
+
+   **Why this matters:** AFC_OpenAMS.py registers the `AMS_extruder` virtual pin handler when loading `[AFC_OpenAMS AMS_1]`. If `[AFC_extruder extruder]` loads first, the virtual pin isn't registered yet, causing the error.
+
+   **Alternative:** If you can't control the include order, move the `[AFC_extruder extruder]` section from AFC_Hardware.cfg into AFC_AMS_1.cfg (below the `[AFC_OpenAMS AMS_1]` section).
+
+   See [TROUBLESHOOTING_AMS_EXTRUDER_PIN.md](TROUBLESHOOTING_AMS_EXTRUDER_PIN.md) for detailed troubleshooting steps.
 
 ### Smart Temperature Purge Macros
 
@@ -795,6 +807,7 @@ If the printer pauses due to false clog detection:
    - Duplicate section names
    - Invalid pin names
    - Syntax errors in macros
+   - **"Pin 'AMS_extruder' is not a valid pin name"** - See [TROUBLESHOOTING_AMS_EXTRUDER_PIN.md](TROUBLESHOOTING_AMS_EXTRUDER_PIN.md) for detailed fix (config loading order issue)
 
 3. **Test configuration syntax:**
    ```bash
