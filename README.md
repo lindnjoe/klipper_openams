@@ -148,11 +148,13 @@ If your directory structure differs from the standard layout, configure the inst
 **Important:** After installation, copy the UPDATED AFC integration modules to your Klipper AFC add-on extras folder:
 
 ```bash
+cd ~/klipper_openams
 cp AFC_OpenAMS.py ~/Klipper-Add-On/extras/
 cp openams_integration.py ~/Klipper-Add-On/extras/
 ```
 ```bash
-cp AFC_AMS1.cfg ~/printer_data/config/AFC/
+cd ~/klipper_openams
+cp AFC_AMS_1.cfg ~/printer_data/config/AFC/
 ```
 
 *Note: This manual copy step will be removed once these modules are merged upstream into the AFC add-on.*
@@ -322,6 +324,7 @@ cd ~/AFC-Klipper-Add-On
 After AFC installation, copy the OpenAMS-specific configuration files to your AFC directory:
 
 ```bash
+cd ~/klipper_openams
 cp AFC_Oams.cfg ~/printer_data/config/AFC/
 cp AFC_Oams_Smart_Purge_Temp_Macros.cfg ~/printer_data/config/AFC/
 ```
