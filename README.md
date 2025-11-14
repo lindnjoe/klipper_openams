@@ -8,6 +8,7 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
 ## Table of Contents
 
 - [Overview](#overview)
+- [What's New](#whats-new)
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -20,6 +21,7 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
   - [Retry Behavior](#retry-behavior)
   - [Clog Detection Settings](#clog-detection-settings)
 - [AFC Integration](#afc-integration)
+  - [Lane-Based Architecture](#lane-based-architecture)
   - [Installing AFC](#installing-afc)
   - [Configuration Files](#configuration-files)
   - [Smart Temperature Purge Macros](#smart-temperature-purge-macros)
@@ -34,23 +36,46 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
 
 ## Overview
 
-OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates with Armored Turtle's AFC (Automatic Filament Changer) add-on to provide a complete multi-material printing solution.
+OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates with Armored Turtle's AFC (Automatic Filament Changer) add-on using a **lane-based architecture** for flexible multi-material printing.
 
 **Key capabilities:**
-- Automatic filament loading and unloading
+- Lane-based filament management through AFC integration
+- Automatic filament loading and unloading with pressure sensing
 - Intelligent retry logic for stuck filament detection
 - Clog detection with configurable sensitivity
+- Event-driven sensor monitoring for optimal performance
 - Runout detection and automatic lane switching
 - Spoolman integration for filament tracking
 - LED status indicators with optional color sync
 
+## What's New
+
+**Recent Major Updates:**
+
+### Lane-Based Architecture (Current Version)
+The system has transitioned from filament groups to a lane-based architecture for better AFC integration:
+
+- **AFC Lanes**: Each OpenAMS slot is now configured as an AFC lane with independent settings
+- **Improved Macros**: All toolchange macros now use `LANE` parameters (`LANE=lane0`) instead of `GROUP` parameters
+- **Event-Driven Sensors**: Sensor monitoring switched from polling to event-based for better performance
+- **AFC Runout Integration**: Runout handling now integrates directly with AFC's lane system
+- **Flexible Hub Mapping**: Each lane can be mapped to different hubs for complex routing scenarios
+
+**Migration Notes:**
+- If upgrading from an older version, your filament group configuration will need to be converted to AFC lanes
+- Macro calls have changed from `GROUP=T0` to `LANE=lane0` format
+- Runout configuration now uses AFC's `SET_MAP_RUNOUT` command instead of OpenAMS filament groups
+- See the [AFC Integration](#afc-integration) section for detailed configuration examples
+
 ## Features
 
+- **Lane-Based Architecture**: Integration with AFC lanes for flexible spool configuration and mapping
+- **Event-Driven Sensors**: Efficient event-based monitoring instead of constant polling for better performance
 - **Automatic Retry Logic**: Configurable retry attempts for both load and unload operations with exponential backoff
 - **Clog Detection**: Three sensitivity levels (low, medium, high) to detect filament clogs during printing
-- **Runout Handling**: Automatic filament runout detection with configurable reload distance
-- **Infinite Spooling**: Seamless lane switching for continuous printing without manual intervention
-- **Temperature Management**: Smart purge temperature calculation for multi-material prints
+- **Runout Handling**: Automatic filament runout detection integrated with AFC lane system
+- **Infinite Spooling**: Seamless lane switching for continuous printing using AFC runout configuration
+- **Smart Temperature Management**: Optional lane-specific temperature control for multi-material prints (disabled by default)
 - **LED Status Indicators**: Visual feedback with optional Spoolman color synchronization
 - **HDC1080 Sensor Support**: Temperature and humidity monitoring within the AMS unit
 
@@ -232,7 +257,25 @@ The `clog_sensitivity` setting in `[oams_manager]` controls how aggressive the c
 
 ## AFC Integration
 
-This OpenAMS fork is designed to work with Armored Turtle's AFC (Automatic Filament Changer) Klipper add-on.
+This OpenAMS fork is designed to work with Armored Turtle's AFC (Automatic Filament Changer) Klipper add-on using a **lane-based architecture**.
+
+### Lane-Based Architecture
+
+OpenAMS integrates with AFC through **lanes** instead of the legacy filament group system. Each lane represents:
+- One physical spool slot on your OpenAMS unit
+- A mapping to a specific hub for filament routing
+- Custom load/unload commands specific to that lane
+- Optional LED indicators
+- Association with a tool number (T0, T1, T2, T3, etc.)
+
+**Benefits of Lane-Based Configuration:**
+- More flexible spool-to-tool mappings
+- Better integration with AFC's toolchange system
+- Easier to configure runout behavior per lane
+- Supports multiple hubs and complex routing
+- Compatible with Spoolman for per-lane temperature settings
+
+**Example:** A single OpenAMS with 4 slots becomes 4 AFC lanes (lane0, lane1, lane2, lane3), each independently configurable with its own hub, toolchange macros, and runout behavior.
 
 ### Installing AFC
 
@@ -286,31 +329,60 @@ Replace `~/printer_data` with your actual printer data path if different.
 
 | File | Purpose | Must Edit? |
 |------|---------|------------|
-| `AFC_AMS1.cfg` | Defines AFC lanes mapped to OpenAMS slots | Yes - configure for your setup |
-| `AFC_Oams.cfg` | OpenAMS hardware configuration (MCU, sensors, etc.) | Yes - set CAN UUIDs and calibration values |
-| `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Load/unload macros with optional smart temperature control (disabled by default) | Yes - customize for your workflow |
+| `AFC_AMS1.cfg` | Defines AFC lanes mapped to OpenAMS slots and hubs | Yes - configure lanes and T-number mappings |
+| `AFC_Oams.cfg` | OpenAMS hardware configuration (MCU, sensors, FPS) | Yes - set CAN UUIDs and calibration values |
+| `AFC_Oams_Macros.cfg` | Basic load/unload macros using lane-based parameters | Optional - included by AFC |
+| `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Enhanced macros with optional smart temperature control (disabled by default) | Optional - alternative to AFC_Oams_Macros.cfg |
 
 **Editing Configuration Files:**
 
 1. **AFC_Oams.cfg**:
    - Set your CAN bus UUIDs for FPS and OAMS MCU boards
    - Configure `_oams_macro_variables` for your specific printer geometry
-   - Adjust retry settings if needed
+   - Adjust retry settings and sensor thresholds if needed
+   - Configure FPS (Filament Pressure Sensor) pin and settings
 
-2. **AFC_AMS1.cfg**:
-   - Map lanes to your specific AMS unit slots  -  *preconfigured for T0-T3*
+2. **AFC_AMS1.cfg** (Lane Configuration):
+   - Each lane maps one OpenAMS slot to a tool number (T0, T1, T2, T3)
+   - Lanes are preconfigured as `lane0` through `lane3` mapped to T0-T3
+   - Each lane specifies its `unit` (e.g., `AMS_1:1` for slot 1), hub, and custom load/unload macros
    - Set LED indices if using LED indicators
-   - Configure hub settings and bowden lengths  -  *will be done later with auto configuration*
+   - Hub settings and bowden lengths will be auto-calibrated
 
-3. **Include in printer.cfg or if copied to the AFC folder they will automatically be included**:
+   **Example lane configuration:**
+   ```ini
+   [AFC_lane lane0]
+   unit: AMS_1:1          # AMS unit and slot number
+   load_to_hub: False     # Filament goes directly to toolhead
+   hub: Hub_1             # Associated hub for this lane
+   map: T0                # Toolchange macro mapping
+   custom_load_cmd: _TX1 LANE=lane0
+   custom_unload_cmd: SAFE_UNLOAD_FILAMENT1
+   ```
+
+3. **Macro Files** (Choose ONE):
+   - **AFC_Oams_Macros.cfg**: Basic macros for load/unload using lane parameters
+   - **AFC_Oams_Smart_Purge_Temp_Macros.cfg**: Enhanced macros with optional temperature management
+
+4. **Include in printer.cfg** (or AFC auto-includes them if in AFC folder):
    ```ini
    [include AFC/AFC_Oams.cfg]
-   [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]
+   [include AFC/AFC_Oams_Macros.cfg]
+   # OR use smart purge macros instead:
+   # [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]
    ```
 
 ### Smart Temperature Purge Macros
 
-The macros include intelligent temperature management for multi-material printing. **By default, smart temperature is disabled**, allowing you full manual control over temperatures.
+The macros support both basic and advanced toolchange operations using **lane-based parameters**. All tool macros (T0-T3) now pass lane names (`lane0`, `lane1`, etc.) to the underlying `_TX1` and `_TX` macros.
+
+**Macro Architecture:**
+- **T0-T3 macros**: User-facing toolchange commands that call `_TX1 LANE=laneX`
+- **_TX1 macro**: Wrapper that passes lane parameters to the generic `_TX` macro
+- **_TX macro**: Core toolchange logic supporting temperature management and AFC integration
+- **SAFE_UNLOAD_FILAMENT1**: Unload macro that can accept optional LANE parameter
+
+The macros include optional intelligent temperature management for multi-material printing. **By default, smart temperature is disabled**, allowing you full manual control over temperatures.
 
 **Smart Temperature Toggle:**
 
@@ -523,52 +595,59 @@ After completing the OpenAMS and AFC installation, calibrate each OpenAMS unit t
 
 ## Infinite Spooling
 
-Infinite spooling allows automatic switching between lanes when a spool runs out, enabling continuous printing without manual intervention.
+Infinite spooling allows automatic switching between lanes when a spool runs out, enabling continuous printing without manual intervention. OpenAMS now integrates with AFC's lane-based runout system for seamless operation.
 
 **Key Features:**
-- No longer requires filament groups to be configured in OpenAMS
-- OpenAMS manages all runout handling for AMS lanes
+- Integrated with AFC lane runout configuration
+- OpenAMS detects runout and notifies AFC to load the next lane
 - Supports infinite spooling between lanes on the same extruder/FPS
-- Falls back to AFC logic for other scenarios
-- Can be configured via console or Mainsail panel
+- Automatic lane switching based on AFC runout settings
+- Can be configured via AFC console commands or Mainsail AFC panel
+
+**How It Works:**
+1. OpenAMS monitors the FPS (Filament Pressure Sensor) and hub sensors
+2. When a spool runs empty, OpenAMS detects the runout event
+3. OpenAMS notifies AFC about the runout
+4. AFC handles the lane switching using its configured runout mappings
+5. The new lane is automatically loaded and printing continues
 
 **Configuration:**
 
-Assign runout lanes using either method:
+Runout lanes are configured through AFC using the `SET_MAP_RUNOUT` command:
 
-**Method 1: Klipper Console**
+**Method 1: Klipper Console (AFC Command)**
 ```
-SET_RUNOUT LANE=<lane #> RUNOUT=<lane #>
+SET_MAP_RUNOUT MAP=<tool> LANE=<lane_name>
 ```
 
-Example: Set lane 1 to use lane 2 as runout backup:
+Example: Set T0 to use lane1 as runout backup:
 ```
-SET_RUNOUT LANE=1 RUNOUT=2
+SET_MAP_RUNOUT MAP=T0 LANE=lane1
 ```
 
 **Method 2: AFC Panel (Mainsail)**
-1. Navigate to the AFC panel
-2. Select the primary lane
-3. Set the runout lane in the configuration dropdown
-
+1. Navigate to the AFC panel in Mainsail
+2. Select the tool/lane
+3. Configure the runout lane in the AFC interface
 
 **Multi-Lane Chains:**
 
-You can create chains of runouts for extended printing:
+You can create chains of runouts for extended printing by configuring multiple mappings:
 ```
-SET_RUNOUT LANE=1 RUNOUT=2
-SET_RUNOUT LANE=2 RUNOUT=3
-SET_RUNOUT LANE=3 RUNOUT=4
+SET_MAP_RUNOUT MAP=T0 LANE=lane1
+SET_MAP_RUNOUT MAP=T1 LANE=lane2
+SET_MAP_RUNOUT MAP=T2 LANE=lane3
 ```
-
-In this example, the printer will automatically switch through lanes 1→2→3→4 as spools run out.
 
 **Material Matching:**
 
 For best results:
-- Chain lanes with the same material type and color
-- Use Spoolman to track filament properties
+- Assign lanes with the same material type and color to the same tool
+- Use Spoolman to track filament properties across lanes
 - Update spool weights regularly for accurate runout detection
+- Configure appropriate runout chains through AFC
+
+**Note:** This system replaces the previous filament group configuration. All runout handling now goes through AFC's lane system for better integration and flexibility.
 
 ## Troubleshooting
 
