@@ -1,0 +1,25 @@
+# AFC Hardware Configuration Example for OpenAMS
+# This file should be copied to ~/printer_data/config/AFC/AFC_Hardware.cfg
+# on your printer system during OpenAMS setup
+
+# AFC Extruder Configuration
+# This section is REQUIRED for OpenAMS to work properly
+[AFC_extruder extruder]
+# For OpenAMS with FPS (Filament Pressure Sensor) ramming:
+# Use AMS_extruder as a virtual pin - this tells AFC that the FPS
+# handles filament sensing and the OpenAMS code will manage it
+pin_tool_start: AMS_extruder
+
+# Alternative: If you're using a physical toolhead sensor instead:
+# Uncomment the line below and comment out the AMS_extruder line above
+# pin_tool_start: ^PC0  # Replace with your actual sensor pin
+
+# Optional: Additional extruder-specific settings
+# tool_stn: 10              # Distance from tool sensor to nozzle (mm)
+# tool_stn_unload: 0        # Unload distance adjustment (mm)
+# tool_load_speed: 10       # Loading speed (mm/s)
+# tool_unload_speed: 10     # Unloading speed (mm/s)
+
+# For multi-extruder setups, add additional AFC_extruder sections:
+# [AFC_extruder extruder1]
+# pin_tool_start: AMS_extruder  # or your sensor pin for second extruder

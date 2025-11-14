@@ -449,13 +449,25 @@ extruder_temp: 250    # PETG temperature
 
 ### AFC Hardware Configuration
 
-Before first boot with AFC, configure the tool sensor pin in the AFC hardware configuration if you didn't do this during installation:
+**CRITICAL SETUP STEP:** Before first boot with AFC, you MUST configure the tool sensor pin in the AFC hardware configuration. This section is REQUIRED for OpenAMS to work properly.
+
+If the `AFC_Hardware.cfg` file doesn't exist yet, you can use the example template provided:
+
+```bash
+# Copy the example file to your AFC config directory
+cp ~/klipper_openams/AFC_Hardware.cfg.example ~/printer_data/config/AFC/AFC_Hardware.cfg
+
+# Then edit it to match your setup
+nano ~/printer_data/config/AFC/AFC_Hardware.cfg
+```
+
+If the file already exists, open it and find or add the `[AFC_extruder extruder]` section:
 
 ```bash
 nano ~/printer_data/config/AFC/AFC_Hardware.cfg
 ```
 
-Find the `[AFC_extruder extruder]` section and set the `pin_tool_start:` value:
+Configure the `[AFC_extruder extruder]` section with the correct `pin_tool_start:` value:
 
 ```ini
 [AFC_extruder extruder]
@@ -467,8 +479,10 @@ pin_tool_start: AMS_extruder
 ```
 
 **Choosing the correct pin:**
-- **Using FPS with ramming**: Set `pin_tool_start: AMS_extruder`
+- **Using FPS with ramming (recommended for OpenAMS)**: Set `pin_tool_start: AMS_extruder`
 - **Using toolhead sensor**: Set to your actual sensor pin (e.g., `^PC0`, `^PA1`, etc.)
+
+**Why this is required:** The `AMS_extruder` virtual pin tells AFC that the OpenAMS FPS (Filament Pressure Sensor) handles filament detection. Without this configuration, you'll get errors like "Pin 'AMS_extruder' is not a valid pin name on mcu 'mcu'"
 
 Once all configuration files are in place and edited, reboot the host to ensure AFC services reload:
 
