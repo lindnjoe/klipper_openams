@@ -59,7 +59,7 @@ The system has transitioned from filament groups to a lane-based architecture fo
 - **Improved Macros**: All toolchange macros now use `LANE` parameters (`LANE=lane0`) instead of `GROUP` parameters
 - **Event-Driven Sensors**: Sensor monitoring switched from polling to event-based for better performance
 - **AFC Runout Integration**: Runout handling now integrates directly with AFC's lane system
-- **Flexible Hub Mapping**: Each lane can be mapped to different hubs for complex routing scenarios
+- **Hub Mapping**: Each lane is mapped to its own hub for visual indication and broke filament detection scenarios
 
 **Migration Notes:**
 - If upgrading from an older version, your filament group configuration will need to be converted to AFC lanes
