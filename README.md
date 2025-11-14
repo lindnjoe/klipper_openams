@@ -151,6 +151,9 @@ If your directory structure differs from the standard layout, configure the inst
 cp AFC_OpenAMS.py ~/Klipper-Add-On/extras/
 cp openams_integration.py ~/Klipper-Add-On/extras/
 ```
+```bash
+cp AFC_AMS1.cfg ~/printer_data/config/AFC/
+```
 
 *Note: This manual copy step will be removed once these modules are merged upstream into the AFC add-on.*
 
