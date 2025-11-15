@@ -312,6 +312,10 @@ class afcAMS(afcUnit):
         self.gcode.register_mux_command("AFC_OAMS_CALIBRATE_HUB_HES_ALL", "UNIT", self.name, self.cmd_AFC_OAMS_CALIBRATE_HUB_HES_ALL, desc="calibrate the OpenAMS HUB HES value for every loaded lane")
         self.gcode.register_mux_command("AFC_OAMS_CALIBRATE_PTFE", "UNIT", self.name, self.cmd_AFC_OAMS_CALIBRATE_PTFE, desc="calibrate the OpenAMS PTFE length for a specific lane")
 
+    def _is_openams_unit(self):
+        """Check if this unit has OpenAMS hardware available."""
+        return self.oams is not None
+
     def _format_openams_calibration_command(self, base_command, lane):
         if base_command not in {"OAMS_CALIBRATE_HUB_HES", "OAMS_CALIBRATE_PTFE_LENGTH"}:
             return super()._format_openams_calibration_command(base_command, lane)
@@ -1128,6 +1132,7 @@ class afcAMS(afcUnit):
                 self.afc.function.afc_led(cur_lane.led_fault, cur_lane.led_index)
                 msg += '<span class=error--text> NOT READY</span>'
                 cur_lane.do_enable(False)
+                cur_lane.disable_buffer()
                 msg = '<span class=error--text>CHECK FILAMENT Prep: False - Load: True</span>'
                 succeeded = False
         else:
@@ -1136,11 +1141,20 @@ class afcAMS(afcUnit):
             if not cur_lane.load_state:
                 msg += '<span class=error--text> NOT LOADED</span>'
                 self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+                cur_lane.disable_buffer()
                 succeeded = False
             else:
                 cur_lane.status = AFCLaneState.LOADED
                 msg += '<span class=success--text> AND LOADED</span>'
                 self.afc.function.afc_led(cur_lane.led_spool_illum, cur_lane.led_spool_index)
+
+                # Enable buffer if: (prep AND hub sensor) OR tool_loaded
+                # Check hub sensor to distinguish loaded lanes from lanes with just filament present
+                hub_loaded = cur_lane.hub_obj and cur_lane.hub_obj.state
+                if hub_loaded or cur_lane.tool_loaded:
+                    cur_lane.enable_buffer()
+                else:
+                    cur_lane.disable_buffer()
 
                 if cur_lane.tool_loaded:
                     tool_ready = (cur_lane.get_toolhead_pre_sensor_state() or cur_lane.extruder_obj.tool_start == "buffer" or cur_lane.extruder_obj.tool_end_state)
@@ -1153,10 +1167,11 @@ class afcAMS(afcUnit):
                             self.afc.spool.set_active_spool(cur_lane.spool_id)
                             cur_lane.unit_obj.lane_tool_loaded(cur_lane)
                             cur_lane.status = AFCLaneState.TOOLED
-                        cur_lane.enable_buffer()
                     elif tool_ready:
                         msg += '<span class=error--text> error in ToolHead. Lane identified as loaded but not identified as loaded in extruder</span>'
                         succeeded = False
+                        # Disable buffer on error
+                        cur_lane.disable_buffer()
 
         if assignTcmd:
             self.afc.function.TcmdAssign(cur_lane)
@@ -1294,26 +1309,30 @@ class afcAMS(afcUnit):
     def _update_shared_lane(self, lane, lane_val, eventtime):
         """Synchronise shared prep/load sensor lanes without triggering errors."""
         # Check if runout has been detected for this lane
-        # If so, ignore sensor state updates that would show filament present
+        # Only block sensor updates if actively in runout state
         if hasattr(lane, '_oams_runout_detected') and lane._oams_runout_detected:
-            # Clear the flag if printer is no longer printing or lane is not current
+            should_block = False
             try:
                 is_printing = self.afc.function.is_printing()
-                is_current = (getattr(lane, 'name', None) == getattr(self.afc, 'current', None))
-                if not is_printing or not is_current:
+                is_tool_loaded = getattr(lane, 'tool_loaded', False)
+                lane_status = getattr(lane, 'status', None)
+                # Only block if actively printing with this lane loaded and in runout state
+                if is_printing and is_tool_loaded and lane_status in (AFCLaneState.INFINITE_RUNOUT, AFCLaneState.TOOL_UNLOADING):
+                    should_block = True
+                else:
+                    # Clear the flag - runout handling is complete
                     lane._oams_runout_detected = False
-                    self.logger.debug("Clearing runout flag for shared lane %s - printer not printing or lane not current", getattr(lane, "name", "unknown"))
+                    self.logger.debug("Clearing runout flag for shared lane %s - runout handling complete", getattr(lane, "name", "unknown"))
             except Exception:
-                pass
+                # On error, clear the flag to be safe
+                lane._oams_runout_detected = False
 
-            if hasattr(lane, '_oams_runout_detected') and lane._oams_runout_detected:
-                if lane_val:  # Trying to set sensors to True (filament present)
-                    self.logger.debug("Ignoring shared lane sensor update for lane %s - runout already detected", getattr(lane, "name", "unknown"))
-                    return
-                else:  # Sensor is confirming empty state
-                    # Clear the runout flag since sensor is now correctly reporting empty
-                    lane._oams_runout_detected = False
-                    self.logger.debug("Shared lane sensor confirmed empty state for lane %s - clearing runout flag", getattr(lane, "name", "unknown"))
+            if should_block and lane_val:  # Only block if conditions met and trying to set sensors to True
+                self.logger.debug("Ignoring shared lane sensor update for lane %s - runout in progress", getattr(lane, "name", "unknown"))
+                return
+            elif not lane_val:  # Sensor confirms empty - always clear flag
+                lane._oams_runout_detected = False
+                self.logger.debug("Shared lane sensor confirmed empty state for lane %s - clearing runout flag", getattr(lane, "name", "unknown"))
 
         if lane_val == self._last_lane_states.get(lane.name):
             return
@@ -1351,27 +1370,34 @@ class afcAMS(afcUnit):
     def _apply_lane_sensor_state(self, lane, lane_val, eventtime):
         """Apply a boolean lane sensor value using existing AFC callbacks."""
         # Check if runout has been detected for this lane
-        # If so, ignore sensor state updates that would show filament present
-        # This prevents physical sensors from overwriting the runout state
+        # Only block sensor updates if:
+        # 1. Runout flag is set AND
+        # 2. Printer is actively printing AND
+        # 3. Lane is currently loaded to tool AND
+        # 4. Lane status indicates it's in a runout/unload state
         if hasattr(lane, '_oams_runout_detected') and lane._oams_runout_detected:
-            # Clear the flag if printer is no longer printing or lane is not current
+            should_block = False
             try:
                 is_printing = self.afc.function.is_printing()
-                is_current = (getattr(lane, 'name', None) == getattr(self.afc, 'current', None))
-                if not is_printing or not is_current:
+                is_tool_loaded = getattr(lane, 'tool_loaded', False)
+                lane_status = getattr(lane, 'status', None)
+                # Only block if actively printing with this lane loaded and in runout state
+                if is_printing and is_tool_loaded and lane_status in (AFCLaneState.INFINITE_RUNOUT, AFCLaneState.TOOL_UNLOADING):
+                    should_block = True
+                else:
+                    # Clear the flag - runout handling is complete
                     lane._oams_runout_detected = False
-                    self.logger.debug("Clearing runout flag for lane %s - printer not printing or lane not current", getattr(lane, "name", "unknown"))
+                    self.logger.debug("Clearing runout flag for lane %s - runout handling complete", getattr(lane, "name", "unknown"))
             except Exception:
-                pass
+                # On error, clear the flag to be safe
+                lane._oams_runout_detected = False
 
-            if hasattr(lane, '_oams_runout_detected') and lane._oams_runout_detected:
-                if lane_val:  # Trying to set sensors to True (filament present)
-                    self.logger.debug("Ignoring sensor update for lane %s - runout already detected", getattr(lane, "name", "unknown"))
-                    return
-                else:  # Sensor is confirming empty state
-                    # Clear the runout flag since sensor is now correctly reporting empty
-                    lane._oams_runout_detected = False
-                    self.logger.debug("Sensor confirmed empty state for lane %s - clearing runout flag", getattr(lane, "name", "unknown"))
+            if should_block and lane_val:  # Only block if conditions met and trying to set sensors to True
+                self.logger.debug("Ignoring sensor update for lane %s - runout in progress", getattr(lane, "name", "unknown"))
+                return
+            elif not lane_val:  # Sensor confirms empty - always clear flag
+                lane._oams_runout_detected = False
+                self.logger.debug("Sensor confirmed empty state for lane %s - clearing runout flag", getattr(lane, "name", "unknown"))
 
         try:
             share = getattr(lane, "ams_share_prep_load", False)
@@ -1601,6 +1627,8 @@ class afcAMS(afcUnit):
 
         # Mark lane as completely empty (prep and load sensors)
         # This ensures AFC sees the lane as empty even if f1s sensor still shows filament
+        # DO NOT call handle_load_runout() here - let AFC's own sensor detect runout naturally
+        # after the filament coasts through the system
         try:
             lane.prep_state = False
             lane.load_state = False
@@ -1611,16 +1639,14 @@ class afcAMS(afcUnit):
             if not hasattr(lane, '_oams_runout_detected'):
                 lane._oams_runout_detected = False
             lane._oams_runout_detected = True
-            self.logger.info("Marked lane %s as empty for runout", lane.name)
+            self.logger.info("Marked lane %s as empty for runout (AFC will detect via sensor)", lane.name)
         except Exception:
             self.logger.exception("Failed to mark lane %s as empty during runout", lane.name)
 
-        try:
-            lane.handle_load_runout(eventtime, False)
-        except TypeError:
-            lane.handle_load_runout(eventtime, load_state=False)
-        except AttributeError:
-            self.logger.warning("Lane %s is missing load runout handler for AMS integration", lane)
+        # NOTE: We do NOT call lane.handle_load_runout() here
+        # This would trigger infinite runout immediately when OpenAMS detects the spool is empty
+        # Instead, we let the filament coast naturally and AFC's prep/load sensor will detect
+        # the runout when the filament actually clears, triggering infinite runout at the proper time
 
     def handle_openams_lane_tool_state(self, lane_name: str, loaded: bool, *, spool_index: Optional[int] = None, eventtime: Optional[float] = None) -> bool:
         """Update lane/tool state in response to OpenAMS hardware events."""
