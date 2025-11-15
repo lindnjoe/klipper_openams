@@ -149,8 +149,8 @@ If your directory structure differs from the standard layout, configure the inst
 
 ```bash
 cd ~/klipper_openams
-cp AFC_OpenAMS.py ~/Klipper-Add-On/extras/
-cp openams_integration.py ~/Klipper-Add-On/extras/
+cp AFC_OpenAMS.py ~/AFC-Klipper-Add-On/extras/
+cp openams_integration.py ~/AFC-Klipper-Add-On/extras/
 ```
 ```bash
 cd ~/klipper_openams
