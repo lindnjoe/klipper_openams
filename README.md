@@ -99,7 +99,7 @@ retry_backoff_max: 5.0
 
 </details>
 
-These configuration blocks live in `printer.cfg` (or split include files) and reference the synced AFC extras installed in later steps. The lane examples come directly from `AFC_AMS_1.cfg` in this repository.
+These configuration blocks are sourced from the repository templates—`AFC_Oams.cfg` contains the `[oams_manager]` and `[oams ...]` sections while `AFC_AMS_1.cfg` defines the `[AFC_lane ...]` entries—and reference the synced AFC extras installed in later steps.
 
 ### Key Capabilities
 - Lane-based filament management through AFC integration
