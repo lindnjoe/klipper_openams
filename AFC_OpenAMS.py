@@ -751,7 +751,7 @@ class afcAMS(afcUnit):
 
         # When a new lane loads to toolhead, clear tool_loaded on any OTHER lanes from this unit
         # that are on the SAME FPS/extruder (each FPS can have its own lane loaded)
-        # This handles cross-FPS runout where AFC switches from OpenAMS lane to different FPS lane
+        # Also unsync lanes on DIFFERENT extruders to allow AFC to unload them
         lane_extruder = getattr(lane.extruder_obj, "name", None) if hasattr(lane, "extruder_obj") else None
         if lane_extruder:
             for other_lane in self.lanes.values():
@@ -762,10 +762,23 @@ class afcAMS(afcUnit):
                 # Check if other lane is on same extruder
                 other_extruder = getattr(other_lane.extruder_obj, "name", None) if hasattr(other_lane, "extruder_obj") else None
                 if other_extruder == lane_extruder:
+                    # Same extruder - just clear tool_loaded
                     other_lane.tool_loaded = False
                     if hasattr(other_lane, '_oams_runout_detected'):
                         other_lane._oams_runout_detected = False
                     self.logger.debug("Cleared tool_loaded for %s on same FPS (new lane %s loaded)", other_lane.name, lane.name)
+                elif other_extruder is not None:
+                    # Different extruder - unsync from old extruder to allow AFC unload
+                    # This clears other_extruder.lane_loaded so AFC won't block the unload
+                    try:
+                        other_lane.unsync_to_extruder()
+                        other_lane.tool_loaded = False
+                        if hasattr(other_lane, '_oams_runout_detected'):
+                            other_lane._oams_runout_detected = False
+                        self.logger.info("Unsynced %s from %s to allow unload (cross-FPS runout, new lane %s on %s)",
+                                       other_lane.name, other_extruder, lane.name, lane_extruder)
+                    except Exception:
+                        self.logger.exception("Failed to unsync %s from extruder during cross-FPS lane load", other_lane.name)
 
         if not self._lane_matches_extruder(lane):
             return
