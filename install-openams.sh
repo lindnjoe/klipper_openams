@@ -101,6 +101,19 @@ add_updater()
     fi
 }
 
+# in the same fashion as add_update create a new function to add the contents of file_templates HDC1080.cfg to ~/klipper/klippy/extras/temperature_sensors.cfg
+add_hdc1080()
+{
+    echo -e -n "Adding HDC1080 sensor to temperature_sensors.cfg... "
+
+    echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+    while read -r line; do
+        echo -e "${line}" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+    done < "$PWD/file_templates/HDC1080.cfg"
+    echo -e "\n" >> ${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg
+    echo "[OK]"
+}
+
 
 restart_klipper()
 {
