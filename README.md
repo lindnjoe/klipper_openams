@@ -48,19 +48,18 @@ OpenAMS provides automated filament handling for Klipper-based 3D printers. This
 
 ### Example Settings
 
-The snippets below show how the integration pieces fit together. Adjust lane names and UUIDs to match your hardware.
+The snippets below show how the integration pieces fit together. Adjust lane names, MCU UUIDs, and macro selections to match your hardware.
 
 <details>
 <summary><strong>OpenAMS Manager</strong></summary>
 
 ```ini
-[openams_manager]
-default_lane = lane0
-lanes = lane0, lane1, lane2, lane3
-retry_load_attempts = 3
-retry_unload_attempts = 2
-clog_detection_mode = medium
-enable_led_sync = true
+[oams_manager]
+# Optional: start loading replacement filament early
+reload_before_toolhead_distance: 0.0
+
+# Optional: lane-wide clog sensitivity (low/medium/high)
+clog_sensitivity: medium
 ```
 
 </details>
@@ -69,38 +68,38 @@ enable_led_sync = true
 <summary><strong>AFC Lane Mapping</strong></summary>
 
 ```ini
-[afc_lane lane0]
-tool = 0
-hub = hub0
-runout_sensor = filament_sensor_lane0
+[AFC_lane lane0]
+unit: AMS_1:1
+hub: Hub_1
+map: T0
+custom_load_cmd: _TX1 LANE=lane0
+custom_unload_cmd: SAFE_UNLOAD_FILAMENT1
 
-[afc_lane lane1]
-tool = 1
-hub = hub1
-runout_sensor = filament_sensor_lane1
+[AFC_lane lane1]
+unit: AMS_1:2
+hub: Hub_2
+map: T1
+custom_load_cmd: _TX1 LANE=lane1
+custom_unload_cmd: SAFE_UNLOAD_FILAMENT1
 ```
 
 </details>
 
 <details>
-<summary><strong>Retry & Clog Detection</strong></summary>
+<summary><strong>OAMS Retry Settings</strong></summary>
 
 ```ini
-[openams_retry]
-lane = lane0
-load_max_attempts = 3
-unload_max_attempts = 2
-backoff_strategy = exponential
-
-[openams_clog_detection]
-lane = lane0
-sensitivity = medium
-retry_on_clog = true
+[oams oams1]
+mcu: oams_mcu1
+load_retry_max: 3
+unload_retry_max: 2
+retry_backoff_base: 1.0
+retry_backoff_max: 5.0
 ```
 
 </details>
 
-These configuration blocks live in `printer.cfg` (or split include files) and reference the synced AFC extras installed in later steps.
+These configuration blocks live in `printer.cfg` (or split include files) and reference the synced AFC extras installed in later steps. The lane examples come directly from `AFC_AMS_1.cfg` in this repository.
 
 ### Key Capabilities
 - Lane-based filament management through AFC integration
@@ -162,7 +161,7 @@ Follow the steps below in order to ensure a working AFC + OpenAMS setup. Each st
 
 1. Clone or update the [AFC Klipper Add-On](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On) following the upstream instructions.
 2. Complete any required MCU flashing and hardware verification.
-3. Confirm the add-on exposes lanes and runout sensors by checking for the `afc_lane` sections in your configuration.
+3. Confirm the add-on exposes lanes and runout sensors by checking for the `[AFC_lane ...]` sections in your configuration.
 
 ### 2. Install OpenAMS
 
