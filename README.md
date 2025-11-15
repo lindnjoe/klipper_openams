@@ -12,9 +12,11 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-  - [First Time Installation](#first-time-installation)
-  - [Switching to This Fork](#switching-to-this-fork)
-  - [Custom Installation Paths](#custom-installation-paths)
+  - [Install/Update AFC](#1-installupdate-afc)
+  - [Install OpenAMS](#2-install-openams)
+    - [Switching to This Fork](#switching-to-this-fork)
+    - [Custom Installation Paths](#custom-installation-paths)
+  - [Apply Interim AFC File Updates](#3-apply-interim-afc-file-updates)
 - [Configuration](#configuration)
   - [OpenAMS Manager Settings](#openams-manager-settings)
   - [OAMS Hardware Settings](#oams-hardware-settings)
@@ -36,9 +38,71 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
 
 ## Overview
 
-OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates with Armored Turtle's AFC (Automatic Filament Changer) add-on using a **lane-based architecture** for flexible multi-material printing.
+OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates tightly with Armored Turtle's AFC (Automatic Filament Changer) add-on using a **lane-based architecture**. The combination delivers end-to-end multi-material automation—from AFC's physical filament routing to OpenAMS' retry logic, runout handling, and print-state awareness.
 
-**Key capabilities:**
+### Full Integration at a Glance
+
+- **AFC** exposes lanes, runout sensors, hub LEDs, and toolchange macros.
+- **OpenAMS** maps those AFC lanes into the AMS manager, applies retry and clog detection logic, and keeps Moonraker/Klipper informed of state changes.
+- **Optional services** like Spoolman and LED sync enrich the integration with live spool metadata and visual feedback.
+
+### Example Settings
+
+The snippets below show how the integration pieces fit together. Adjust lane names and UUIDs to match your hardware.
+
+<details>
+<summary><strong>OpenAMS Manager</strong></summary>
+
+```ini
+[openams_manager]
+default_lane = lane0
+lanes = lane0, lane1, lane2, lane3
+retry_load_attempts = 3
+retry_unload_attempts = 2
+clog_detection_mode = medium
+enable_led_sync = true
+```
+
+</details>
+
+<details>
+<summary><strong>AFC Lane Mapping</strong></summary>
+
+```ini
+[afc_lane lane0]
+tool = 0
+hub = hub0
+runout_sensor = filament_sensor_lane0
+
+[afc_lane lane1]
+tool = 1
+hub = hub1
+runout_sensor = filament_sensor_lane1
+```
+
+</details>
+
+<details>
+<summary><strong>Retry & Clog Detection</strong></summary>
+
+```ini
+[openams_retry]
+lane = lane0
+load_max_attempts = 3
+unload_max_attempts = 2
+backoff_strategy = exponential
+
+[openams_clog_detection]
+lane = lane0
+sensitivity = medium
+retry_on_clog = true
+```
+
+</details>
+
+These configuration blocks live in `printer.cfg` (or split include files) and reference the synced AFC extras installed in later steps.
+
+### Key Capabilities
 - Lane-based filament management through AFC integration
 - Automatic filament loading and unloading with pressure sensing
 - Intelligent retry logic for stuck filament detection
@@ -92,7 +156,15 @@ Before installing OpenAMS, ensure you have:
 
 ## Installation
 
-### First Time Installation
+Follow the steps below in order to ensure a working AFC + OpenAMS setup. Each stage builds on the previous one.
+
+### 1. Install/Update AFC
+
+1. Clone or update the [AFC Klipper Add-On](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On) following the upstream instructions.
+2. Complete any required MCU flashing and hardware verification.
+3. Confirm the add-on exposes lanes and runout sensors by checking for the `afc_lane` sections in your configuration.
+
+### 2. Install OpenAMS
 
 If this is your first time installing OpenAMS, use the provided installation script:
 
@@ -109,7 +181,7 @@ The installation script will:
 3. Configure Moonraker update manager
 4. Restart Klipper services
 
-### Switching to This Fork
+#### Switching to This Fork
 
 If you already have OpenAMS installed and want to switch to this fork:
 
@@ -124,7 +196,7 @@ git checkout -B lindnjoe-master lindnjoe/master
 
 The `git checkout -B` command creates a local `lindnjoe-master` branch that tracks this repository, allowing easy updates with `git pull`.
 
-### Custom Installation Paths
+#### Custom Installation Paths
 
 If your directory structure differs from the standard layout, configure the installation with additional parameters:
 
@@ -142,22 +214,18 @@ If your directory structure differs from the standard layout, configure the inst
 ./install-openams.sh -k /home/pi/klipper -c /home/pi/printer_data/config
 ```
 
-### Post-Installation File Copy *Don't do this now, do this after full installation is complete*
+### 3. Apply Interim AFC File Updates
 
-***********THE FOLLOWING STEP MUST BE DONE LAST TO UPDATE TO CURRENT WORKING VERSION - WILL REMOVE WHEN UPSTREAM UPDATED********
-**Important:** After installation, copy the UPDATED AFC integration modules to your Klipper AFC add-on extras folder:
+Upstream AFC changes are still pending. After completing the installations above, manually copy the updated integration files from this repository:
 
 ```bash
 cd ~/klipper_openams
 cp AFC_OpenAMS.py ~/AFC-Klipper-Add-On/extras/
 cp openams_integration.py ~/AFC-Klipper-Add-On/extras/
-```
-```bash
-cd ~/klipper_openams
 cp AFC_AMS_1.cfg ~/printer_data/config/AFC/
 ```
 
-*Note: This manual copy step will be removed once these modules are merged upstream into the AFC add-on.*
+Re-run `sudo service klipper restart` (or your custom service name) to pick up the changes. This manual step will be removed once the updates are merged upstream.
 
 ## Configuration
 
