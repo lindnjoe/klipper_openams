@@ -2074,6 +2074,19 @@ class OAMSManager:
             fps_state.reset_clog_tracker()
             return
 
+        # Skip clog detection if FPS pressure is very low - indicates stuck spool, not clog
+        # During lane loads, stuck spool should trigger retry logic, not clog pause
+        # During normal printing, low pressure also indicates stuck spool (separate detection)
+        if pressure <= self.stuck_spool_pressure_threshold:
+            # Very low FPS pressure indicates stuck spool, not clog - skip clog detection
+            fps_state.reset_clog_tracker()
+            return
+
+        # Clog detection now runs normally for all states (including TOOL_LOADING)
+        # During load purge: extruder advances + encoder doesn't move = genuine clog, detect it
+        # Before purge starts: extruder not advancing = clog won't trigger (extrusion_delta < threshold)
+        # The existing clog logic is already smart enough to handle this correctly
+
         try:
             extruder_pos = float(getattr(fps.extruder, "last_position", 0.0))
         except Exception:
