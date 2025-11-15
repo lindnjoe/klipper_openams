@@ -509,7 +509,15 @@ The Spoolman LED sync feature allows the OpenAMS active tool LED to display the 
 cp spoolman_led_sync.cfg ~/printer_data/config/AFC/
 ```
 
-2. Edit `~/printer_data/config/AFC/spoolman_led_sync.cfg` and enable the feature:
+2. Create a symbolic link for the Spoolman LED sync helper so Klipper can load it:
+
+```bash
+ln -sf "$(pwd)/spoolman_led_sync.py" ~/klipper/klippy/extras/spoolman_led_sync.py
+```
+
+> **Tip:** Run the command from the repository root (where `spoolman_led_sync.py` lives) or adjust the source path accordingly.
+
+3. Edit `~/printer_data/config/AFC/spoolman_led_sync.cfg` and enable the feature:
 
 ```ini
 [spoolman_led_sync]
@@ -517,7 +525,7 @@ enable: True
 default_color: 0000FF  # Blue (default) - used when no Spoolman data available
 ```
 
-3. Optionally customize the default LED color for lanes without Spoolman data:
+4. Optionally customize the default LED color for lanes without Spoolman data:
 
 **Common color examples:**
 - White: `FFFFFF`
@@ -528,7 +536,7 @@ default_color: 0000FF  # Blue (default) - used when no Spoolman data available
 - Cyan: `00FFFF`
 - Orange: `FFA500`
 
-4. Restart Klipper to load the new configuration:
+5. Restart Klipper to load the new configuration:
 
 ```
 FIRMWARE_RESTART
