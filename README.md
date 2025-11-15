@@ -212,6 +212,9 @@ cd ~/AFC-Klipper-Add-On
    - Enter an AMS name (default: `AMS_1`) or use the default
    - Configure your preferred options (tip forming, cutters, macros, etc.)
    - Complete the installation
+   
+   <img width="1086" height="803" alt="AFC installation prompts" src="https://github.com/user-attachments/assets/7b62feea-d566-4be5-9d44-5b79644fc841" />
+
 4. **Best practice:** Install AFC while your OpenAMS unit is **empty** to avoid interruptions during the system file updates.
 
 #### Stage AFC Configuration Templates
