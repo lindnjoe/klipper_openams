@@ -636,16 +636,16 @@ Infinite spooling allows automatic switching between lanes when a spool runs out
 
 **Configuration:**
 
-Runout lanes are configured through AFC using the `SET_MAP_RUNOUT` command:
+Runout lanes are configured through AFC using the `SET_RUNOUT` command:
 
 **Method 1: Klipper Console (AFC Command)**
 ```
-SET_MAP_RUNOUT MAP=<tool> LANE=<lane_name>
+SET_RUNOUT LANE=lane# RUNOUT=lane#
 ```
 
-Example: Set T0 to use lane1 as runout backup:
+Example: Set lane0 to use lane1 as runout backup:
 ```
-SET_MAP_RUNOUT MAP=T0 LANE=lane1
+SET_RUNOUT LANE=lane0 RUNOUT=lane1
 ```
 
 **Method 2: AFC Panel (Mainsail)**
@@ -657,9 +657,9 @@ SET_MAP_RUNOUT MAP=T0 LANE=lane1
 
 You can create chains of runouts for extended printing by configuring multiple mappings:
 ```
-SET_MAP_RUNOUT MAP=T0 LANE=lane1
-SET_MAP_RUNOUT MAP=T1 LANE=lane2
-SET_MAP_RUNOUT MAP=T2 LANE=lane3
+SET_RUNOUT LANE=lane0 RUNOUT=lane1
+SET_RUNOUT LANE=lane1 RUNOUT=lane2
+SET_RUNOUT LANE=lane2 RUNOUT=lane3
 ```
 
 **Material Matching:**
