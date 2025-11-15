@@ -12,9 +12,16 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-  - [First Time Installation](#first-time-installation)
-  - [Switching to This Fork](#switching-to-this-fork)
-  - [Custom Installation Paths](#custom-installation-paths)
+  - [Install/Update AFC](#1-installupdate-afc)
+    - [Lane Architecture Primer](#lane-architecture-primer)
+    - [Install the AFC Add-On](#install-the-afc-add-on)
+    - [Stage AFC Configuration Templates](#stage-afc-configuration-templates)
+    - [Smart Temperature Purge Macros](#smart-temperature-purge-macros)
+    - [AFC Hardware Configuration Checklist](#afc-hardware-configuration-checklist)
+  - [Install OpenAMS](#2-install-openams)
+    - [Switching to This Fork](#switching-to-this-fork)
+    - [Custom Installation Paths](#custom-installation-paths)
+  - [Apply Interim AFC File Updates](#3-apply-interim-afc-file-updates)
 - [Configuration](#configuration)
   - [OpenAMS Manager Settings](#openams-manager-settings)
   - [OAMS Hardware Settings](#oams-hardware-settings)
@@ -36,9 +43,70 @@ A Klipper integration for OpenAMS that enables multi-material printing with auto
 
 ## Overview
 
-OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates with Armored Turtle's AFC (Automatic Filament Changer) add-on using a **lane-based architecture** for flexible multi-material printing.
+OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates tightly with Armored Turtle's AFC (Automatic Filament Changer) add-on using a **lane-based architecture**. The combination delivers end-to-end multi-material automation—from AFC's physical filament routing to OpenAMS' retry logic, runout handling, and print-state awareness.
 
-**Key capabilities:**
+### Full Integration at a Glance
+
+- **AFC** exposes lanes, runout sensors, hub LEDs, and toolchange macros.
+- **OpenAMS** maps those AFC lanes into the AMS manager, applies retry and clog detection logic, and keeps Moonraker/Klipper informed of state changes.
+- **Optional services** like Spoolman and LED sync enrich the integration with live spool metadata and visual feedback.
+
+### Example Settings
+
+The snippets below show how the integration pieces fit together. Adjust lane names, MCU UUIDs, and macro selections to match your hardware.
+
+<details>
+<summary><strong>OpenAMS Manager</strong></summary>
+
+```ini
+[oams_manager]
+# Optional: start loading replacement filament early
+reload_before_toolhead_distance: 0.0
+
+# Optional: lane-wide clog sensitivity (low/medium/high)
+clog_sensitivity: medium
+```
+
+</details>
+
+<details>
+<summary><strong>AFC Lane Mapping</strong></summary>
+
+```ini
+[AFC_lane lane0]
+unit: AMS_1:1
+hub: Hub_1
+map: T0
+custom_load_cmd: _TX1 LANE=lane0
+custom_unload_cmd: SAFE_UNLOAD_FILAMENT1
+
+[AFC_lane lane1]
+unit: AMS_1:2
+hub: Hub_2
+map: T1
+custom_load_cmd: _TX1 LANE=lane1
+custom_unload_cmd: SAFE_UNLOAD_FILAMENT1
+```
+
+</details>
+
+<details>
+<summary><strong>OAMS Retry Settings</strong></summary>
+
+```ini
+[oams oams1]
+mcu: oams_mcu1
+load_retry_max: 3
+unload_retry_max: 2
+retry_backoff_base: 1.0
+retry_backoff_max: 5.0
+```
+
+</details>
+
+These configuration blocks are sourced from the repository templates—`AFC_Oams.cfg` contains the `[oams_manager]` and `[oams ...]` sections while `AFC_AMS_1.cfg` defines the `[AFC_lane ...]` entries—and reference the synced AFC extras installed in later steps.
+
+### Key Capabilities
 - Lane-based filament management through AFC integration
 - Automatic filament loading and unloading with pressure sensing
 - Intelligent retry logic for stuck filament detection
@@ -92,7 +160,167 @@ Before installing OpenAMS, ensure you have:
 
 ## Installation
 
-### First Time Installation
+Follow the steps below in order to ensure a working AFC + OpenAMS setup. Each stage builds on the previous one.
+
+### 1. Install/Update AFC
+
+This step lays down the Armored Turtle AFC framework that OpenAMS builds on. Complete each subsection before moving to the OpenAMS installer.
+
+#### Lane Architecture Primer
+
+OpenAMS integrates with AFC through **lanes** instead of the legacy filament group system. Each lane represents:
+
+- One physical spool slot on your OpenAMS unit
+- A mapping to a specific hub for filament routing
+- Custom load/unload commands specific to that lane
+- Optional LED indicators
+- Association with a tool number (T0, T1, T2, T3, etc.)
+
+**Benefits of lane-based configuration:**
+
+- More flexible spool-to-tool mappings
+- Better integration with AFC's toolchange system
+- Easier to configure runout behavior per lane
+- Supports multiple hubs and complex routing
+- Compatible with Spoolman for per-lane temperature settings
+
+**Example:** A single OpenAMS with four slots becomes four AFC lanes (`lane0`–`lane3`), each independently configurable with its own hub, toolchange macros, and runout behavior.
+
+#### Install the AFC Add-On
+
+Clone the Armored Turtle repository:
+
+```bash
+cd ~
+git clone https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git
+```
+
+Install the AFC add-on from the `multi_extruder` branch:
+
+```bash
+cd ~/AFC-Klipper-Add-On
+./install-afc.sh -b multi_extruder
+```
+
+**Important setup notes:**
+
+1. **Read the AFC documentation:** Most of the Armored Turtle setup guide applies directly to OpenAMS. Review it at <https://www.armoredturtle.xyz/docs/afc-klipper-add-on/index.html>.
+2. **Box Turtle vs OpenAMS:** Some documentation is specific to Box Turtle hardware and will not apply to OpenAMS. When in doubt, leave defaults in place—the OpenAMS-specific config files override Box Turtle defaults.
+3. **Installation prompts:** During the AFC installation, you'll be presented with an interactive menu:
+   - Press **T** to cycle through installation types until you see **OpenAMS**
+   - Select the **OpenAMS** unit type when prompted
+   - Enter an AMS name (default: `AMS_1`) or use the default
+   - Configure your preferred options (tip forming, cutters, macros, etc.)
+   - Complete the installation
+   
+   <img width="1086" height="803" alt="AFC installation prompts" src="https://github.com/user-attachments/assets/7b62feea-d566-4be5-9d44-5b79644fc841" />
+
+4. **Best practice:** Install AFC while your OpenAMS unit is **empty** to avoid interruptions during the system file updates.
+
+#### Stage AFC Configuration Templates
+
+After the AFC installer completes, stage the OpenAMS-specific configuration files from this repository so they are in place before you run the OpenAMS installer:
+
+```bash
+cd ~/klipper_openams
+cp AFC_AMS_1.cfg ~/printer_data/config/AFC/
+cp AFC_Oams.cfg ~/printer_data/config/AFC/
+cp AFC_Oams_Smart_Purge_Temp_Macros.cfg ~/printer_data/config/AFC/
+```
+
+Replace `~/printer_data` with your actual printer data path if different.
+
+**Configuration file overview:**
+
+| File | Purpose | Must edit? |
+|------|---------|------------|
+| `AFC_AMS_1.cfg` | Defines AFC lanes mapped to OpenAMS slots and hubs | Yes – configure lanes and T-number mappings |
+| `AFC_Oams.cfg` | OpenAMS hardware configuration (MCU, sensors, FPS) | Yes – set CAN UUIDs and calibration values |
+| `AFC_Oams_Macros.cfg` | Basic load/unload macros using lane-based parameters | Optional – included by AFC |
+| `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Enhanced macros with optional smart temperature control (disabled by default) | Optional – alternative to `AFC_Oams_Macros.cfg` |
+
+Include the chosen files in your Klipper configuration stack (typically `printer.cfg` or split include files):
+
+```ini
+[include AFC/AFC_Oams.cfg]
+[include AFC/AFC_Oams_Macros.cfg]
+# OR use smart purge macros instead:
+# [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]
+```
+
+The `[oams_manager]` and `[oams ...]` sections shown earlier come from `AFC_Oams.cfg`, while the lane definitions originate from `AFC_AMS_1.cfg`. Customize them before running the OpenAMS installer so the service restarts with your hardware details.
+
+#### Smart Temperature Purge Macros
+
+The macros support both basic and advanced toolchange operations using **lane-based parameters**. All tool macros (T0–T3) now pass lane names (`lane0`, `lane1`, etc.) to the underlying `_TX1` and `_TX` macros.
+
+**Macro architecture:**
+
+- **T0–T3 macros:** User-facing toolchange commands that call `_TX1 LANE=laneX`
+- **_TX1 macro:** Wrapper that passes lane parameters to the generic `_TX` macro
+- **_TX macro:** Core toolchange logic supporting temperature management and AFC integration
+- **SAFE_UNLOAD_FILAMENT1:** Unload macro that can accept an optional `LANE` parameter
+
+The macros include optional intelligent temperature management for multi-material printing. **By default, smart temperature is disabled**, allowing you full manual control over temperatures.
+
+**Smart temperature toggle:**
+
+To enable or disable smart temperature management, edit `AFC_Oams_Smart_Purge_Temp_Macros.cfg`:
+
+```ini
+[gcode_macro _oams_smart_temp_settings]
+# Enable or disable smart temperature adjustment during load/unload
+# When enabled: Uses lane-specific temps and calculates optimal purge temps
+# When disabled: Uses current extruder temperature without any changes
+#                (allows you to manually control temperature)
+# Default: False
+variable_enable_smart_temp: False  # Set to True to enable
+gcode:
+    # This macro just holds variables, no gcode needed
+```
+
+Restart Klipper after making changes: `FIRMWARE_RESTART`.
+
+**How smart purge works (when enabled):**
+
+1. **During unload** (`SAFE_UNLOAD_FILAMENT`):
+   - Heats to the **old lane's configured temperature** (or 240 °C default)
+   - Uses a safety floor of 210 °C minimum
+   - Records which lane was unloaded for the next tool change
+2. **During load** (`_TX`):
+   - Retrieves the previously unloaded lane
+   - Calculates the **maximum** of old and new lane temperatures
+   - Heats to the higher temperature before loading
+   - Ensures high-temp filament (e.g., PETG at 250 °C) can be purged when switching to lower-temp materials (e.g., PLA at 210 °C)
+3. **First load** (after reboot):
+   - Falls back to 240 °C default if no previous spool loaded
+   - Can be customized in the macro
+
+#### AFC Hardware Configuration Checklist
+
+With the templates staged, edit the hardware-specific values before moving on:
+
+1. **AFC_Oams.cfg:**
+   - Set your CAN bus UUIDs or serial identifiers for FPS and OAMS MCU boards
+   - Configure `_oams_macro_variables` for your printer geometry
+   - Adjust retry settings and sensor thresholds as needed
+   - Configure FPS (Filament Pressure Sensor) pin and settings
+2. **AFC_AMS_1.cfg (lane configuration):**
+   - Map each OpenAMS slot to a tool number (T0–T3)
+   - Verify each lane specifies its `unit` (e.g., `AMS_1:1`), hub, and custom load/unload macros
+   - Set LED indices if using LED indicators
+   - Review the default lane template from this repo and tailor hub mappings and bowden lengths to your hardware
+3. **Macro files (choose one):**
+   - `AFC_Oams_Macros.cfg` for basic load/unload logic
+   - `AFC_Oams_Smart_Purge_Temp_Macros.cfg` for temperature-aware tool changes
+4. **AFC_Hardware.cfg:**
+   - Open the hardware template installed by AFC: `nano ~/printer_data/config/AFC/AFC_Hardware.cfg`
+   - In `[AFC_extruder extruder]`, set `pin_tool_start:` to `AMS_extruder` when the Filament Pressure Sensor handles ramming
+   - If you rely on a toolhead filament sensor instead, set `pin_tool_start:` to your actual sensor pin (e.g., `^PC0`)
+
+Only after the AFC installer, template staging, and configuration edits are complete should you proceed to installing OpenAMS.
+
+### 2. Install OpenAMS
 
 If this is your first time installing OpenAMS, use the provided installation script:
 
@@ -109,7 +337,7 @@ The installation script will:
 3. Configure Moonraker update manager
 4. Restart Klipper services
 
-### Switching to This Fork
+#### Switching to This Fork
 
 If you already have OpenAMS installed and want to switch to this fork:
 
@@ -124,7 +352,7 @@ git checkout -B lindnjoe-master lindnjoe/master
 
 The `git checkout -B` command creates a local `lindnjoe-master` branch that tracks this repository, allowing easy updates with `git pull`.
 
-### Custom Installation Paths
+#### Custom Installation Paths
 
 If your directory structure differs from the standard layout, configure the installation with additional parameters:
 
@@ -142,22 +370,21 @@ If your directory structure differs from the standard layout, configure the inst
 ./install-openams.sh -k /home/pi/klipper -c /home/pi/printer_data/config
 ```
 
-### Post-Installation File Copy *Don't do this now, do this after full installation is complete*
+### 3. Apply Interim AFC File Updates
 
-***********THE FOLLOWING STEP MUST BE DONE LAST TO UPDATE TO CURRENT WORKING VERSION - WILL REMOVE WHEN UPSTREAM UPDATED********
-**Important:** After installation, copy the UPDATED AFC integration modules to your Klipper AFC add-on extras folder:
+Upstream AFC changes are still pending. After completing the installations above, manually copy the updated integration files from this repository:
 
 ```bash
 cd ~/klipper_openams
 cp AFC_OpenAMS.py ~/AFC-Klipper-Add-On/extras/
 cp openams_integration.py ~/AFC-Klipper-Add-On/extras/
-```
-```bash
-cd ~/klipper_openams
+# Skip this overwrite if you already customized the staged file in Step 1
 cp AFC_AMS_1.cfg ~/printer_data/config/AFC/
 ```
 
-*Note: This manual copy step will be removed once these modules are merged upstream into the AFC add-on.*
+If you have edits in `~/printer_data/config/AFC/AFC_AMS_1.cfg`, either merge them back in after this copy or omit the line above.
+
+Re-run `sudo service klipper restart` (or your custom service name) to pick up the changes. This manual step will be removed once the updates are merged upstream.
 
 ## Configuration
 
@@ -260,224 +487,6 @@ The `clog_sensitivity` setting in `[oams_manager]` controls how aggressive the c
 - If clogs aren't detected quickly enough, increase to `high`
 - Consider your material: flexible filaments may need `low` sensitivity
 
-## AFC Integration
-
-This OpenAMS fork is designed to work with Armored Turtle's AFC (Automatic Filament Changer) Klipper add-on using a **lane-based architecture**.
-
-### Lane-Based Architecture
-
-OpenAMS integrates with AFC through **lanes** instead of the legacy filament group system. Each lane represents:
-- One physical spool slot on your OpenAMS unit
-- A mapping to a specific hub for filament routing
-- Custom load/unload commands specific to that lane
-- Optional LED indicators
-- Association with a tool number (T0, T1, T2, T3, etc.)
-
-**Benefits of Lane-Based Configuration:**
-- More flexible spool-to-tool mappings
-- Better integration with AFC's toolchange system
-- Easier to configure runout behavior per lane
-- Supports multiple hubs and complex routing
-- Compatible with Spoolman for per-lane temperature settings
-
-**Example:** A single OpenAMS with 4 slots becomes 4 AFC lanes (lane0, lane1, lane2, lane3), each independently configurable with its own hub, toolchange macros, and runout behavior.
-
-### Installing AFC
-
-Clone the Armored Turtle Repo
-
-```bash
-cd ~
-git clone https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git
-```
-
-Install the AFC add-on from the multi_extruder branch:
-
-```bash
-cd ~/AFC-Klipper-Add-On
-./install-afc.sh -b multi_extruder
-```
-
-**Important Setup Notes:**
-
-1. **Read the AFC Documentation**: Most of the Armored Turtle setup documentation applies directly to OpenAMS. Review it at: (https://www.armoredturtle.xyz/docs/afc-klipper-add-on/index.html)
-
-2. **Box Turtle vs OpenAMS**: Some documentation is specific to Box Turtle hardware and won't apply to OpenAMS. When in doubt:
-   - Ask for clarification
-   - Leave default settings in place
-   - The OpenAMS-specific config files override Box Turtle defaults
-
-3. **Installation Prompts**: During the AFC installation, you'll be presented with an interactive menu:
-   - Press **T** to cycle through installation types until you see **OpenAMS**
-   - Select the **OpenAMS** unit type when prompted
-   - Enter an AMS name (default: `AMS_1`) or use the default
-   - Configure your preferred options (tip forming, cutters, macros, etc.)
-   - Complete the installation
-
-<img width="1086" height="803" alt="image" src="https://github.com/user-attachments/assets/7b62feea-d566-4be5-9d44-5b79644fc841" />
-
-
-4. **Best Practice**: Install AFC while your OpenAMS unit is **empty** to avoid interruptions during the system file updates.
-
-### Configuration Files
-
-After AFC installation, copy the OpenAMS-specific configuration files to your AFC directory:
-
-```bash
-cd ~/klipper_openams
-cp AFC_Oams.cfg ~/printer_data/config/AFC/
-cp AFC_Oams_Smart_Purge_Temp_Macros.cfg ~/printer_data/config/AFC/
-```
-
-Replace `~/printer_data` with your actual printer data path if different.
-
-**Configuration File Overview:**
-
-| File | Purpose | Must Edit? |
-|------|---------|------------|
-| `AFC_AMS1.cfg` | Defines AFC lanes mapped to OpenAMS slots and hubs | Yes - configure lanes and T-number mappings |
-| `AFC_Oams.cfg` | OpenAMS hardware configuration (MCU, sensors, FPS) | Yes - set CAN UUIDs and calibration values |
-| `AFC_Oams_Macros.cfg` | Basic load/unload macros using lane-based parameters | Optional - included by AFC |
-| `AFC_Oams_Smart_Purge_Temp_Macros.cfg` | Enhanced macros with optional smart temperature control (disabled by default) | Optional - alternative to AFC_Oams_Macros.cfg |
-
-**Editing Configuration Files:**
-
-1. **AFC_Oams.cfg**:
-   - Set your CAN bus UUIDs for FPS and OAMS MCU boards
-   - Configure `_oams_macro_variables` for your specific printer geometry
-   - Adjust retry settings and sensor thresholds if needed
-   - Configure FPS (Filament Pressure Sensor) pin and settings
-
-2. **AFC_AMS1.cfg** (Lane Configuration):
-   - Each lane maps one OpenAMS slot to a tool number (T0, T1, T2, T3)
-   - Lanes are preconfigured as `lane0` through `lane3` mapped to T0-T3
-   - Each lane specifies its `unit` (e.g., `AMS_1:1` for slot 1), hub, and custom load/unload macros
-   - Set LED indices if using LED indicators
-   - Hub settings and bowden lengths will be auto-calibrated
-
-   **Example lane configuration:**
-   ```ini
-   [AFC_lane lane0]
-   unit: AMS_1:1          # AMS unit and slot number
-   load_to_hub: False     # Filament goes directly to toolhead
-   hub: Hub_1             # Associated hub for this lane
-   map: T0                # Toolchange macro mapping
-   custom_load_cmd: _TX1 LANE=lane0
-   custom_unload_cmd: SAFE_UNLOAD_FILAMENT1
-   ```
-
-3. **Macro Files** (Choose ONE):
-   - **AFC_Oams_Macros.cfg**: Basic macros for load/unload using lane parameters
-   - **AFC_Oams_Smart_Purge_Temp_Macros.cfg**: Enhanced macros with optional temperature management
-
-4. **Include in printer.cfg** (or AFC auto-includes them if in AFC folder):
-   ```ini
-   [include AFC/AFC_Oams.cfg]
-   [include AFC/AFC_Oams_Macros.cfg]
-   # OR use smart purge macros instead:
-   # [include AFC/AFC_Oams_Smart_Purge_Temp_Macros.cfg]
-   ```
-
-### Smart Temperature Purge Macros
-
-The macros support both basic and advanced toolchange operations using **lane-based parameters**. All tool macros (T0-T3) now pass lane names (`lane0`, `lane1`, etc.) to the underlying `_TX1` and `_TX` macros.
-
-**Macro Architecture:**
-- **T0-T3 macros**: User-facing toolchange commands that call `_TX1 LANE=laneX`
-- **_TX1 macro**: Wrapper that passes lane parameters to the generic `_TX` macro
-- **_TX macro**: Core toolchange logic supporting temperature management and AFC integration
-- **SAFE_UNLOAD_FILAMENT1**: Unload macro that can accept optional LANE parameter
-
-The macros include optional intelligent temperature management for multi-material printing. **By default, smart temperature is disabled**, allowing you full manual control over temperatures.
-
-**Smart Temperature Toggle:**
-
-To enable or disable smart temperature management, edit `AFC_Oams_Smart_Purge_Temp_Macros.cfg`:
-
-```ini
-[gcode_macro _oams_smart_temp_settings]
-# Enable or disable smart temperature adjustment during load/unload
-# When enabled: Uses lane-specific temps and calculates optimal purge temps
-# When disabled: Uses current extruder temperature without any changes
-#                (allows you to manually control temperature)
-# Default: False
-variable_enable_smart_temp: False  # Set to True to enable
-gcode:
-    # This macro just holds variables, no gcode needed
-```
-
-Restart Klipper after making changes: `FIRMWARE_RESTART`
-
-**How Smart Purge Works (When Enabled):**
-
-The smart purge macros automatically manage temperatures during tool changes:
-
-1. **During Unload** (`SAFE_UNLOAD_FILAMENT`):
-   - Heats to the **old lane's configured temperature** (or 240°C default)
-   - Uses a safety floor of 210°C minimum
-   - Records which lane was unloaded for next tool change
-
-2. **During Load** (`_TX`):
-   - Retrieves the previously unloaded lane
-   - Calculates the **maximum** of old and new lane temperatures
-   - Heats to the higher temperature before loading
-   - This ensures high-temp filament (e.g., PETG at 250°C) can be properly purged when switching to lower-temp materials (e.g., PLA at 210°C)
-
-3. **First Load** (after reboot):
-   - Falls back to 240°C default if no previous spool loaded
-   - Can be customized in the macro
-
-**Configuration:**
-
-Set extruder temperatures for each lane in `AFC_AMS1.cfg` If using Spoolman this will not be needed as it will pull the spool info from there:
-
-```ini
-[AFC_lane lane0]
-unit: AMS_1:1
-extruder_temp: 210    # PLA temperature
-# ... other settings ...
-
-[AFC_lane lane1]
-unit: AMS_1:2
-extruder_temp: 250    # PETG temperature
-# ... other settings ...
-```
-
-**Important:**
-- Smart temperature is **disabled by default**
-- When enabled, smart purge macros leave the heater at the purge temperature when finished. Your print start G-code or slicer must set the final temperature for the active tool
-
-### AFC Hardware Configuration
-
-Before first boot with AFC, configure the tool sensor pin in the AFC hardware configuration if you didn't do this during installation:
-
-```bash
-nano ~/printer_data/config/AFC/AFC_Hardware.cfg
-```
-
-Find the `[AFC_extruder extruder]` section and set the `pin_tool_start:` value:
-
-```ini
-[AFC_extruder extruder]
-# Use AMS_extruder if FPS (Filament Pressure Sensor) handles filament sensing with ramming
-pin_tool_start: AMS_extruder
-
-# OR use your toolhead filament sensor pin if not using FPS ramming
-# pin_tool_start: ^PC0  # Example - adjust to your wiring
-```
-
-**Choosing the correct pin:**
-- **Using FPS with ramming**: Set `pin_tool_start: AMS_extruder`
-- **Using toolhead sensor**: Set to your actual sensor pin (e.g., `^PC0`, `^PA1`, etc.)
-
-Once all configuration files are in place and edited, reboot the host to ensure AFC services reload:
-
-```bash
-sudo reboot
-```
-
-**Important:** Only load spools into the AMS **after** the first boot with AFC completes.
-
 ## Optional Features
 
 ### Spoolman LED Sync
@@ -500,7 +509,15 @@ The Spoolman LED sync feature allows the OpenAMS active tool LED to display the 
 cp spoolman_led_sync.cfg ~/printer_data/config/AFC/
 ```
 
-2. Edit `~/printer_data/config/AFC/spoolman_led_sync.cfg` and enable the feature:
+2. Create a symbolic link for the Spoolman LED sync helper so Klipper can load it:
+
+```bash
+ln -sf "$(pwd)/spoolman_led_sync.py" ~/klipper/klippy/extras/spoolman_led_sync.py
+```
+
+> **Tip:** Run the command from the repository root (where `spoolman_led_sync.py` lives) or adjust the source path accordingly.
+
+3. Edit `~/printer_data/config/AFC/spoolman_led_sync.cfg` and enable the feature:
 
 ```ini
 [spoolman_led_sync]
@@ -508,7 +525,7 @@ enable: True
 default_color: 0000FF  # Blue (default) - used when no Spoolman data available
 ```
 
-3. Optionally customize the default LED color for lanes without Spoolman data:
+4. Optionally customize the default LED color for lanes without Spoolman data:
 
 **Common color examples:**
 - White: `FFFFFF`
@@ -519,7 +536,7 @@ default_color: 0000FF  # Blue (default) - used when no Spoolman data available
 - Cyan: `00FFFF`
 - Orange: `FFA500`
 
-4. Restart Klipper to load the new configuration:
+5. Restart Klipper to load the new configuration:
 
 ```
 FIRMWARE_RESTART
