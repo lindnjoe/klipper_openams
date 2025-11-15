@@ -982,7 +982,7 @@ class OAMSManager:
         Returns: (target_lane_map, target_lane_name, delegate_to_afc, source_lane_name)
         - target_lane_map: Lane map attribute or lane name (for display)
         - target_lane_name: Actual target lane name to load
-        - delegate_to_afc: True if AFC should handle (different FPS/extruder)
+        - delegate_to_afc: True if AFC should handle (always True to preserve coasting/timing logic)
         - source_lane_name: Current source lane name
         """
         current_lane = fps_state.current_lane
@@ -1012,44 +1012,25 @@ class OAMSManager:
             self.logger.warning("Runout lane %s for %s on %s is not available; deferring to AFC", runout_lane_name, lane_name, fps_name)
             return None, runout_lane_name, True, lane_name
 
-        source_unit = self._lane_unit_map.get(lane_name)
-        target_unit = self._lane_unit_map.get(runout_lane_name)
-        if source_unit and target_unit and source_unit != target_unit:
-            return None, runout_lane_name, True, lane_name
+        # Check if source and target lanes are on the same FPS/extruder
+        # If SAME FPS: OpenAMS handles reload internally (coast, PTFE calc, load new spool)
+        # If DIFFERENT FPS: AFC handles via CHANGE_TOOL (full runout, then switch tools)
+        source_extruder = getattr(lane.extruder_obj, "name", None) if hasattr(lane, "extruder_obj") else None
+        target_extruder = getattr(target_lane.extruder_obj, "name", None) if hasattr(target_lane, "extruder_obj") else None
 
-        source_extruder = getattr(lane, "extruder_obj", None)
-        target_extruder = getattr(target_lane, "extruder_obj", None)
-        if (source_extruder is not None and target_extruder is not None and source_extruder is not target_extruder):
-            return None, runout_lane_name, True, lane_name
+        same_fps = (source_extruder == target_extruder and source_extruder is not None)
+        delegate_to_afc = not same_fps  # Only delegate if different FPS
 
-        # Check if both lanes are on the same FPS by querying their unit configurations
-        # This replaces the group-based lookup system
-        source_fps = self.get_fps_for_afc_lane(lane_name)
-        target_fps = self.get_fps_for_afc_lane(runout_lane_name)
-
-        # If we can't determine FPS for either lane, defer to AFC
-        if source_fps is None or target_fps is None:
-            self.logger.info("Cannot determine FPS for lanes %s or %s, deferring to AFC", lane_name, runout_lane_name)
-            return None, runout_lane_name, True, lane_name
-
-        # If lanes are on different FPS or not on the current FPS, defer to AFC
-        if source_fps != fps_name or target_fps != fps_name:
-            self.logger.info("Deferring infinite runout: %s on %s, %s on %s (current FPS: %s)",
-                           lane_name, source_fps, runout_lane_name, target_fps, fps_name)
-            return None, runout_lane_name, True, lane_name
-
-        # If source and target are the same lane, defer to AFC (no swap needed)
-        if lane_name == runout_lane_name:
-            return None, runout_lane_name, True, lane_name
-
-        # Both lanes are on the same FPS - OpenAMS can handle the swap internally
-        self.logger.info("Infinite runout: %s -> %s on %s (same FPS)",
-                       lane_name, runout_lane_name, fps_name)
-
-        # Return target lane info (lane map or lane name for display)
         target_lane_map = getattr(target_lane, "map", runout_lane_name)
 
-        return target_lane_map, runout_lane_name, False, lane_name
+        if same_fps:
+            self.logger.info("Infinite runout: %s -> %s on same FPS %s (OpenAMS handling internally)",
+                           lane_name, runout_lane_name, fps_name)
+        else:
+            self.logger.info("Infinite runout: %s -> %s on different FPS (delegating to AFC for tool change)",
+                           lane_name, runout_lane_name)
+
+        return target_lane_map, runout_lane_name, delegate_to_afc, lane_name
 
     def _delegate_runout_to_afc(self, fps_name: str, fps_state: 'FPSState', source_lane_name: Optional[str], target_lane_name: Optional[str]) -> bool:
         afc = self._get_afc()
