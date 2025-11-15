@@ -640,6 +640,12 @@ class OAMSManager:
             except Exception:
                 self.logger.exception("Failed to clear errors on %s", getattr(oam, "name", "<unknown>"))
         self.determine_state()
+
+        # After clearing errors and detecting state, ensure followers are enabled for any
+        # lanes that have filament loaded to the hub (even if not loaded to toolhead)
+        # This keeps filament pressure up for manual operations during troubleshooting
+        self._ensure_followers_for_loaded_hubs()
+
         self.start_monitors()
 
     cmd_STATUS_help = "Show OAMS manager state and run state detection diagnostics"
@@ -1619,6 +1625,108 @@ class OAMSManager:
 
         fps_state.direction = 1
         self._enable_follower(fps_name, fps_state, oams, 1, context)
+
+    def _ensure_followers_for_loaded_hubs(self) -> None:
+        """
+        Ensure followers are enabled for any bays that have filament loaded to the hub.
+        This is called after OAMSM_CLEAR_ERRORS to re-enable followers for manual operations.
+
+        Follower should be enabled if:
+        - Hub sensor shows filament present
+        - Not in an error state that requires follower disabled
+        """
+        for oams_name, oams in self.oams.items():
+            try:
+                # Get hub sensor values for this OAMS
+                hub_hes_values = getattr(oams, "hub_hes_value", None)
+                if hub_hes_values is None:
+                    continue
+
+                # Check each bay (0-3 for 4-bay AMS)
+                for bay_idx in range(len(hub_hes_values)):
+                    # Check if hub sensor shows filament loaded
+                    if not hub_hes_values[bay_idx]:
+                        continue  # No filament in this bay
+
+                    # Find the FPS that corresponds to this OAMS bay
+                    # Each OAMS bay maps to a specific FPS
+                    fps_name = self._find_fps_for_oams_bay(oams_name, bay_idx)
+                    if fps_name is None:
+                        continue
+
+                    fps_state = self.current_state.fps_state.get(fps_name)
+                    if fps_state is None:
+                        continue
+
+                    # Don't enable follower if in active error state requiring it to be disabled
+                    # (stuck_spool_active and clog_active should already be cleared by clear_errors)
+                    if fps_state.stuck_spool_active or fps_state.clog_active:
+                        continue
+
+                    # Don't enable if currently loading/unloading
+                    if fps_state.state in (FPSLoadState.LOADING, FPSLoadState.UNLOADING):
+                        continue
+
+                    # Enable follower if not already enabled
+                    if not fps_state.following or fps_state.direction != 1:
+                        self.logger.info("Re-enabling follower for %s bay %d after clearing errors (hub sensor shows loaded)",
+                                       oams_name, bay_idx)
+                        fps_state.current_oams = oams_name
+                        fps_state.current_spool_idx = bay_idx
+                        fps_state.direction = 1
+                        self._enable_follower(fps_name, fps_state, oams, 1, "clear errors - hub loaded")
+
+            except Exception:
+                self.logger.exception("Failed to enable follower for %s during error clear", oams_name)
+
+    def _find_fps_for_oams_bay(self, oams_name: str, bay_idx: int) -> Optional[str]:
+        """Find the FPS name that corresponds to a specific OAMS bay."""
+        # Query AFC to find which lane uses this OAMS bay
+        afc = self._get_afc()
+        if afc is None or not hasattr(afc, 'lanes'):
+            return None
+
+        # Look through AFC lanes to find one that matches this OAMS and bay
+        for lane_name, lane in afc.lanes.items():
+            # Get lane's unit and slot
+            unit_str = getattr(lane, "unit", None)
+            if not unit_str:
+                continue
+
+            # Parse unit name and slot
+            if isinstance(unit_str, str) and ':' in unit_str:
+                base_unit_name, slot_str = unit_str.split(':', 1)
+                try:
+                    slot_number = int(slot_str)
+                except ValueError:
+                    continue
+            else:
+                base_unit_name = str(unit_str)
+                slot_number = getattr(lane, "index", None)
+                if slot_number is None:
+                    continue
+
+            # Convert slot to bay index
+            lane_bay_idx = slot_number - 1
+            if lane_bay_idx != bay_idx:
+                continue
+
+            # Check if this lane's unit uses this OAMS
+            unit_obj = getattr(lane, "unit_obj", None)
+            if unit_obj is None:
+                units = getattr(afc, "units", {})
+                unit_obj = units.get(base_unit_name)
+            if unit_obj is None:
+                continue
+
+            lane_oams_name = getattr(unit_obj, "oams_name", None)
+            if lane_oams_name != oams_name and f"oams {lane_oams_name}" != oams_name:
+                continue
+
+            # Found matching lane - return its FPS
+            return self.get_fps_for_afc_lane(lane_name)
+
+        return None
 
     def _restore_follower_if_needed(self, fps_name: str, fps_state: "FPSState", oams: Optional[Any], context: str) -> None:
         if not fps_state.stuck_spool_restore_follower:
