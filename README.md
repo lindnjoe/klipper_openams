@@ -319,6 +319,7 @@ With the templates staged, edit the hardware-specific values before moving on:
    - If you rely on a toolhead filament sensor instead, set `pin_tool_start:` to your actual sensor pin (e.g., `^PC0`)
 
 Only after the AFC installer, template staging, and configuration edits are complete should you proceed to installing OpenAMS.
+<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/093877d5-ff56-4837-9f38-0e878ae5180b" />
 
 ### 2. Install OpenAMS
 
