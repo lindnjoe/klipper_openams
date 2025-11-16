@@ -1423,6 +1423,53 @@ class afcAMS(afcUnit):
                                     lane_extruder.lane_loaded = None
                                     self.logger.info("Cross-Extruder: Cleared extruder.lane_loaded for cross-extruder unload")
 
+                                    # Also clear FPS state in OAMS manager
+                                    try:
+                                        oams_mgr = self.printer.lookup_object("oams_manager", None)
+                                        if oams_mgr is not None:
+                                            fps_name = oams_mgr.get_fps_for_afc_lane(lane_name)
+                                            if fps_name:
+                                                fps_state = oams_mgr.current_state.fps_state.get(fps_name)
+                                                if fps_state is not None:
+                                                    spool_index = fps_state.current_spool_idx
+
+                                                    # Clear FPS state (matching _unload_filament_for_fps logic)
+                                                    fps_state.state = 0  # FPSLoadState.UNLOADED
+                                                    fps_state.following = False
+                                                    fps_state.direction = 0
+                                                    fps_state.clog_restore_follower = False
+                                                    fps_state.clog_restore_direction = 1
+                                                    fps_state.since = self.reactor.monotonic()
+                                                    fps_state.current_lane = None
+                                                    fps_state.current_spool_idx = None
+                                                    if hasattr(fps_state, 'reset_stuck_spool_state'):
+                                                        fps_state.reset_stuck_spool_state()
+
+                                                    self.logger.info("Cross-Extruder: Cleared FPS state for {} (was spool {})".format(fps_name, spool_index))
+
+                                                    # Notify AFC via AMSRunoutCoordinator
+                                                    try:
+                                                        from .openams_integration import AMSRunoutCoordinator
+                                                        AMSRunoutCoordinator.notify_lane_tool_state(
+                                                            self.printer,
+                                                            self.oams_name,
+                                                            lane_name,
+                                                            loaded=False,
+                                                            spool_index=spool_index,
+                                                            eventtime=fps_state.since
+                                                        )
+                                                        self.logger.info("Cross-Extruder: Notified AFC that lane {} unloaded".format(lane_name))
+                                                    except Exception:
+                                                        self.logger.exception("Failed to notify AFC about lane {} unload".format(lane_name))
+                                                else:
+                                                    self.logger.warning("Cross-Extruder: Could not find FPS state for {}".format(fps_name))
+                                            else:
+                                                self.logger.warning("Cross-Extruder: Could not find FPS name for lane {}".format(lane_name))
+                                        else:
+                                            self.logger.warning("Cross-Extruder: OAMS manager not found, FPS state not cleared")
+                                    except Exception:
+                                        self.logger.exception("Failed to clear FPS state for lane {}".format(lane_name))
+
                                 # Clear the flag
                                 lane._oams_cross_extruder_runout = False
                             except Exception as e:
