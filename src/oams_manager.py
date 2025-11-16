@@ -2224,6 +2224,29 @@ class OAMSManager:
             return
 
         if (encoder_delta > settings["encoder_slack"] or pressure_span > settings["pressure_band"]):
+            # Encoder is moving or pressure is varying - filament is flowing
+            # If clog was previously active, clear it and restore follower
+            if fps_state.clog_active:
+                self.logger.info("Clog cleared on %s - encoder moving normally (delta=%d, pressure_span=%.2f)",
+                                fps_name, encoder_delta, pressure_span)
+
+                # Clear LED error
+                if oams is not None and fps_state.current_spool_idx is not None:
+                    try:
+                        oams.set_led_error(fps_state.current_spool_idx, 0)
+                    except Exception:
+                        self.logger.exception("Failed to clear clog LED on %s after auto-recovery", fps_name)
+
+                # Clear clog state but preserve restore flags
+                fps_state.reset_clog_tracker(preserve_restore=True)
+
+                # Restore follower if it was disabled due to clog
+                if fps_state.clog_restore_follower and is_printing:
+                    self._reactivate_clog_follower(fps_name, fps_state, oams, "clog auto-clear")
+                elif is_printing and not fps_state.following:
+                    # Ensure follower is enabled if printing and not following
+                    self._ensure_forward_follower(fps_name, fps_state, "clog auto-clear")
+
             fps_state.prime_clog_tracker(extruder_pos, encoder_value, pressure, now)
             return
 
