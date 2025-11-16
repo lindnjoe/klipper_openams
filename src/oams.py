@@ -256,16 +256,18 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             logging.error("Failed to initialize OAMS commands: %s", e)
 
     def handle_ready(self):
-        """Clear errors when klippy is ready to ensure clean state for operations.
+        """Clear software error states when klippy is ready.
 
-        This ensures that any stale error states from previous sessions don't
-        prevent the follower from enabling when it should be enabled.
+        This ensures that any stale action_status states from previous sessions
+        don't prevent the follower from enabling when it should be enabled.
+        Hardware error clearing (LED errors) was already done in handle_connect().
         """
-        try:
-            self.clear_errors()
-            logging.info("OAMS[%d]: Cleared errors on ready", self.oams_idx)
-        except Exception as e:
-            logging.error("OAMS[%d]: Failed to clear errors on ready: %s", self.oams_idx, e)
+        # Clear any stale action status from previous operations
+        # Don't send MCU commands here to avoid interfering with manager initialization
+        self.action_status = None
+        self.action_status_code = None
+        self.action_status_value = None
+        logging.info("OAMS[%d]: Cleared software error states on ready", self.oams_idx)
 
     def get_spool_status(self, bay_index):
         return self.f1s_hes_value[bay_index]
