@@ -1343,7 +1343,12 @@ class OAMSManager:
         except Exception:
             self.logger.exception("Failed to load bay %s on %s", bay_index, oams_name)
             fps_state.state = FPSLoadState.UNLOADED
-            return False, f"Failed to load bay {bay_index} on {oams_name}"
+            error_msg = f"Failed to load bay {bay_index} on {oams_name}"
+
+            # CRITICAL: Pause printer if load fails during printing
+            # This prevents printing without filament loaded
+            self._pause_on_critical_failure(error_msg, oams_name)
+            return False, error_msg
 
         if success:
             fps_state.current_lane = lane_name  # Store lane name (e.g., "lane8") not map (e.g., "T0")
@@ -1379,7 +1384,15 @@ class OAMSManager:
             return True, f"Loaded lane {lane_name} ({oam_name} bay {bay_index})"
         else:
             fps_state.state = FPSLoadState.UNLOADED
-            return False, message if message else f"Failed to load lane {lane_name}"
+            error_msg = message if message else f"Failed to load lane {lane_name}"
+
+            # CRITICAL: Pause printer if load fails during printing
+            # This prevents printing without filament loaded, which would cause:
+            # - No encoder movement
+            # - FPS pressure at ~0.01
+            # - Print failure and possible nozzle damage
+            self._pause_on_critical_failure(error_msg, oams_name)
+            return False, error_msg
 
 
     cmd_UNLOAD_FILAMENT_help = "Unload a spool from any of the OAMS if any is loaded"
@@ -1411,6 +1424,53 @@ class OAMSManager:
         # Load directly from lane configuration
         success, message = self._load_filament_for_lane(lane_name)
         gcmd.respond_info(message)
+
+    def _pause_on_critical_failure(self, error_message: str, oams_name: Optional[str] = None) -> None:
+        """
+        Pause the printer if a critical failure occurs during printing.
+
+        This prevents catastrophic failures like:
+        - Printing without filament loaded
+        - Attempting to extrude with no material
+        - Nozzle damage from dry printing
+
+        Only pauses if printer is actively printing. Manual operations during idle
+        will just report the error without pausing.
+
+        Args:
+            error_message: Description of the failure
+            oams_name: Name of the OAMS unit that encountered the error
+        """
+        # OPTIMIZATION: Use cached idle_timeout object
+        idle_timeout = self._idle_timeout_obj
+        if idle_timeout is None:
+            try:
+                idle_timeout = self.printer.lookup_object("idle_timeout")
+                self._idle_timeout_obj = idle_timeout
+            except Exception:
+                self.logger.warning("Cannot check printer state for pause decision")
+                # If we can't determine state, err on the side of caution and pause anyway
+                self._pause_printer_message(error_message, oams_name)
+                return
+
+        # Check if printer is currently printing
+        try:
+            eventtime = self.reactor.monotonic()
+            status = idle_timeout.get_status(eventtime)
+            is_printing = status.get("state") == "Printing"
+        except Exception:
+            self.logger.exception("Failed to get printer state")
+            # If we can't determine state, err on the side of caution and pause anyway
+            self._pause_printer_message(error_message, oams_name)
+            return
+
+        if is_printing:
+            # Critical: printer is trying to print without filament loaded
+            self.logger.error("CRITICAL FAILURE during printing: %s - PAUSING PRINTER", error_message)
+            self._pause_printer_message(error_message, oams_name)
+        else:
+            # Not printing, just log the error - user can retry manually
+            self.logger.warning("Load failed while idle: %s", error_message)
 
     def _pause_printer_message(self, message, oams_name: Optional[str] = None):
         self.logger.info(message)
