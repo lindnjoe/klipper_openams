@@ -1434,6 +1434,9 @@ class OAMSManager:
         - Attempting to extrude with no material
         - Nozzle damage from dry printing
 
+        The pause is scheduled asynchronously to avoid deadlocks when called
+        from within gcode commands (like custom load macros).
+
         Only pauses if printer is actively printing. Manual operations during idle
         will just report the error without pausing.
 
@@ -1449,8 +1452,8 @@ class OAMSManager:
                 self._idle_timeout_obj = idle_timeout
             except Exception:
                 self.logger.warning("Cannot check printer state for pause decision")
-                # If we can't determine state, err on the side of caution and pause anyway
-                self._pause_printer_message(error_message, oams_name)
+                # Schedule async pause to avoid deadlock
+                self._schedule_async_pause(error_message, oams_name)
                 return
 
         # Check if printer is currently printing
@@ -1460,17 +1463,36 @@ class OAMSManager:
             is_printing = status.get("state") == "Printing"
         except Exception:
             self.logger.exception("Failed to get printer state")
-            # If we can't determine state, err on the side of caution and pause anyway
-            self._pause_printer_message(error_message, oams_name)
+            # Schedule async pause to avoid deadlock
+            self._schedule_async_pause(error_message, oams_name)
             return
 
         if is_printing:
             # Critical: printer is trying to print without filament loaded
             self.logger.error("CRITICAL FAILURE during printing: %s - PAUSING PRINTER", error_message)
-            self._pause_printer_message(error_message, oams_name)
+            # Schedule pause asynchronously to avoid deadlock when called from gcode command
+            self._schedule_async_pause(error_message, oams_name)
         else:
             # Not printing, just log the error - user can retry manually
             self.logger.warning("Load failed while idle: %s", error_message)
+
+    def _schedule_async_pause(self, message: str, oams_name: Optional[str] = None) -> None:
+        """
+        Schedule a pause to happen asynchronously via reactor timer.
+
+        This prevents deadlocks when pause is triggered from within a gcode command.
+        The timer will fire after the current command completes, allowing the pause
+        to execute in a clean context.
+        """
+        def _do_pause(eventtime):
+            try:
+                self._pause_printer_message(message, oams_name)
+            except Exception:
+                self.logger.exception("Failed to execute async pause")
+            return self.reactor.NEVER
+
+        # Schedule pause to happen ASAP (0.05s delay to let current command finish)
+        self.reactor.register_timer(_do_pause, self.reactor.monotonic() + 0.05)
 
     def _pause_printer_message(self, message, oams_name: Optional[str] = None):
         self.logger.info(message)
