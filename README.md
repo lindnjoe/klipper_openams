@@ -209,7 +209,7 @@ cd ~/AFC-Klipper-Add-On
 3. **Installation prompts:** During the AFC installation, you'll be presented with an interactive menu:
    - Press **T** to cycle through installation types until you see **OpenAMS**
    - Select the **OpenAMS** unit type when prompted
-   - Enter an AMS name (default: `AMS_1`) or use the default
+   - Enter an AMS name or use the default (please make sure it starts with AMS) (default: `AMS_1`) 
    - Configure your preferred options (tip forming, cutters, macros, etc.)
    - Complete the installation
    
