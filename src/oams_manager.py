@@ -626,19 +626,44 @@ class OAMSManager:
     
     cmd_CLEAR_ERRORS_help = "Clear the error state of the OAMS"
     def cmd_CLEAR_ERRORS(self, gcmd):
+        # Stop all monitors and reset runout states
         if len(self.monitor_timers) > 0:
             self.stop_monitors()
-        for fps_state in self.current_state.fps_state.values():
+
+        # Reset all runout monitors to clear COASTING and other states
+        for fps_name, monitor in list(self.runout_monitors.items()):
+            try:
+                monitor.reset()
+            except Exception:
+                self.logger.exception("Failed to reset runout monitor for %s", fps_name)
+
+        # Clear all FPS state error flags and tracking
+        for fps_name, fps_state in self.current_state.fps_state.items():
             fps_state.clear_encoder_samples()
             fps_state.reset_stuck_spool_state()
             fps_state.reset_clog_tracker()
+            fps_state.afc_delegation_active = False
+            fps_state.afc_delegation_until = 0.0
             self._cancel_post_load_pressure_check(fps_state)
 
+            # Clear LED errors for all spools
+            if fps_state.current_oams and fps_state.current_spool_idx is not None:
+                oams = self.oams.get(fps_state.current_oams)
+                if oams:
+                    try:
+                        oams.set_led_error(fps_state.current_spool_idx, 0)
+                    except Exception:
+                        self.logger.exception("Failed to clear LED error on %s spool %s",
+                                            fps_state.current_oams, fps_state.current_spool_idx)
+
+        # Clear OAMS hardware errors
         for oam in self.oams.values():
             try:
                 oam.clear_errors()
             except Exception:
                 self.logger.exception("Failed to clear errors on %s", getattr(oam, "name", "<unknown>"))
+
+        # Re-detect state from hardware sensors
         self.determine_state()
 
         # After clearing errors and detecting state, ensure followers are enabled for any
@@ -646,7 +671,10 @@ class OAMSManager:
         # This keeps filament pressure up for manual operations during troubleshooting
         self._ensure_followers_for_loaded_hubs()
 
+        # Restart all monitors
         self.start_monitors()
+
+        gcmd.respond_info("OAMS errors cleared and system re-initialized")
 
     cmd_STATUS_help = "Show OAMS manager state and run state detection diagnostics"
     def cmd_STATUS(self, gcmd):
@@ -1633,7 +1661,12 @@ class OAMSManager:
 
         Follower should be enabled if:
         - Hub sensor shows filament present
-        - Not in an error state that requires follower disabled
+        - Not in an active error state (stuck_spool_active or clog_active)
+        - Not in infinite runout COASTING state
+        - Not currently loading/unloading
+
+        This enables followers even when not printing to maintain FPS pressure near 0.5
+        for manual operations and troubleshooting.
         """
         for oams_name, oams in self.oams.items():
             try:
@@ -1658,16 +1691,25 @@ class OAMSManager:
                     if fps_state is None:
                         continue
 
+                    # Check if runout monitor is in COASTING state (infinite runout in progress)
+                    monitor = self.runout_monitors.get(fps_name)
+                    if monitor is not None and monitor.state == OAMSRunoutState.COASTING:
+                        self.logger.debug("Skipping follower enable for %s - in infinite runout coast", fps_name)
+                        continue
+
                     # Don't enable follower if in active error state requiring it to be disabled
                     # (stuck_spool_active and clog_active should already be cleared by clear_errors)
                     if fps_state.stuck_spool_active or fps_state.clog_active:
+                        self.logger.debug("Skipping follower enable for %s - error state active", fps_name)
                         continue
 
                     # Don't enable if currently loading/unloading
                     if fps_state.state in (FPSLoadState.LOADING, FPSLoadState.UNLOADING):
+                        self.logger.debug("Skipping follower enable for %s - loading/unloading", fps_name)
                         continue
 
-                    # Enable follower if not already enabled
+                    # Enable follower if not already enabled in forward direction
+                    # This maintains FPS pressure near 0.5 even when not printing
                     if not fps_state.following or fps_state.direction != 1:
                         self.logger.info("Re-enabling follower for %s bay %d after clearing errors (hub sensor shows loaded)",
                                        oams_name, bay_idx)
