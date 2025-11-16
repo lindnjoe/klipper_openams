@@ -751,7 +751,7 @@ class afcAMS(afcUnit):
 
         # When a new lane loads to toolhead, clear tool_loaded on any OTHER lanes from this unit
         # that are on the SAME FPS/extruder (each FPS can have its own lane loaded)
-        # Also unsync lanes on DIFFERENT extruders to allow AFC to unload them
+        # This handles cross-FPS runout where AFC switches from OpenAMS lane to different FPS lane
         lane_extruder = getattr(lane.extruder_obj, "name", None) if hasattr(lane, "extruder_obj") else None
         if lane_extruder:
             for other_lane in self.lanes.values():
@@ -761,40 +761,13 @@ class afcAMS(afcUnit):
                     continue
                 # Check if other lane is on same extruder
                 other_extruder = getattr(other_lane.extruder_obj, "name", None) if hasattr(other_lane, "extruder_obj") else None
+
                 if other_extruder == lane_extruder:
-                    # Same extruder - just clear tool_loaded
+                    # Same FPS: Just clear tool_loaded
                     other_lane.tool_loaded = False
                     if hasattr(other_lane, '_oams_runout_detected'):
                         other_lane._oams_runout_detected = False
                     self.logger.debug("Cleared tool_loaded for %s on same FPS (new lane %s loaded)", other_lane.name, lane.name)
-                elif other_extruder is not None:
-                    # Different extruder - check if it's using virtual sensor
-                    # Only unsync for virtual sensors (AMS_EXTRUDER) - real sensors handle clearing naturally
-                    other_extruder_obj = getattr(other_lane, "extruder_obj", None)
-                    if other_extruder_obj is not None:
-                        other_tool_start = getattr(other_extruder_obj, "tool_start", None)
-                        is_virtual_sensor = (
-                            other_tool_start is not None and
-                            isinstance(other_tool_start, str) and
-                            other_tool_start.upper().startswith("AMS_")
-                        )
-
-                        if is_virtual_sensor:
-                            # Virtual sensor - manually unsync to clear extruder.lane_loaded
-                            # (Real sensors would handle this naturally when filament clears)
-                            try:
-                                other_lane.unsync_to_extruder()
-                                other_lane.tool_loaded = False
-                                if hasattr(other_lane, '_oams_runout_detected'):
-                                    other_lane._oams_runout_detected = False
-                                self.logger.info("Unsynced %s from virtual sensor extruder %s (cross-FPS runout, new lane %s on %s)",
-                                               other_lane.name, other_extruder, lane.name, lane_extruder)
-                            except Exception:
-                                self.logger.exception("Failed to unsync %s from extruder during cross-FPS lane load", other_lane.name)
-                        else:
-                            # Real sensor - let AFC's natural sensor handling clear it when filament clears
-                            self.logger.debug("Skipping unsync for %s on real sensor extruder %s (AFC will handle naturally)",
-                                           other_lane.name, other_extruder)
 
         if not self._lane_matches_extruder(lane):
             return
@@ -1412,15 +1385,24 @@ class afcAMS(afcUnit):
             return
 
         lane_val = bool(value)
+        prev_val = self._last_lane_states.get(lane.name)
 
-        # Update lane state based on sensor
+        # Update lane state based on sensor FIRST
         if getattr(lane, "ams_share_prep_load", False):
             self._update_shared_lane(lane, lane_val, eventtime)
-        elif lane_val != self._last_lane_states.get(lane.name):
+        elif lane_val != prev_val:
             lane.load_callback(eventtime, lane_val)
             lane.prep_callback(eventtime, lane_val)
             self._mirror_lane_to_virtual_sensor(lane, eventtime)
             self._last_lane_states[lane.name] = lane_val
+
+        # Detect F1S sensor going False (spool empty) - trigger runout detection AFTER sensor update
+        if prev_val and not lane_val:
+            self.logger.info("F1S sensor False for %s (spool empty), triggering runout detection", lane.name)
+            try:
+                self.handle_runout_detected(bay, None, lane_name=lane.name)
+            except Exception:
+                self.logger.exception("Failed to handle runout detection for %s", lane.name)
 
         # Update hardware service snapshot
         if self.hardware_service is not None:
@@ -1598,26 +1580,6 @@ class afcAMS(afcUnit):
         # When sensor goes False (empty), clear tool_loaded like same-FPS runout does
         # This mimics the behavior in _update_shared_lane() for non-shared lanes
         if not lane_val:
-            # IMPORTANT: For virtual sensor extruders, unsync BEFORE clearing tool_loaded
-            # This ensures extruder.lane_loaded gets cleared to allow AFC to unload this lane
-            if getattr(lane, 'tool_loaded', False):
-                extruder_obj = getattr(lane, "extruder_obj", None)
-                if extruder_obj is not None:
-                    tool_start = getattr(extruder_obj, "tool_start", None)
-                    is_virtual_sensor = (
-                        tool_start is not None and
-                        isinstance(tool_start, str) and
-                        tool_start.upper().startswith("AMS_")
-                    )
-                    if is_virtual_sensor:
-                        # Virtual sensor - unsync from extruder to clear extruder.lane_loaded
-                        try:
-                            lane.unsync_to_extruder()
-                            self.logger.info("Unsynced %s from virtual sensor extruder %s when sensor cleared",
-                                           lane.name, extruder_obj.name)
-                        except Exception:
-                            self.logger.exception("Failed to unsync %s from extruder when sensor cleared", lane.name)
-
             lane.tool_loaded = False
             lane.loaded_to_hub = False
             lane.status = AFCLaneState.NONE
@@ -1845,6 +1807,13 @@ class afcAMS(afcUnit):
                 self.logger.info("Same-FPS runout: Marked lane %s for runout (OpenAMS handling reload, sensors sync naturally)", lane.name)
             else:
                 self.logger.info("Cross-FPS runout: Marked lane %s for runout (AFC will handle tool change)", lane.name)
+                # Cross-FPS: Clear this lane from toolhead NOW while we're still on this extruder
+                # This prevents "LANE is loaded in toolhead, can't unload" error later
+                try:
+                    self.gcode.run_script_from_command("UNSET_LANE_LOADED")
+                    self.logger.info("Cross-FPS runout: Issued UNSET_LANE_LOADED for %s before extruder switch", lane.name)
+                except Exception:
+                    self.logger.exception("Failed to issue UNSET_LANE_LOADED for %s during cross-FPS runout", lane.name)
         except Exception:
             self.logger.exception("Failed to mark lane %s for runout tracking", lane.name)
 
