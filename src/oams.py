@@ -174,6 +174,7 @@ class OAMS:
                     "Failed to register OAMS controller with AMSHardwareService"
                 )
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
 
     def get_status(self, eventtime: float) -> dict:
         """Return current hardware status for monitoring."""
@@ -254,12 +255,32 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         except Exception as e:
             logging.error("Failed to initialize OAMS commands: %s", e)
 
+    def handle_ready(self):
+        """Clear errors when klippy is ready to ensure clean state for operations.
+
+        This ensures that any stale error states from previous sessions don't
+        prevent the follower from enabling when it should be enabled.
+        """
+        try:
+            self.clear_errors()
+            logging.info("OAMS[%d]: Cleared errors on ready", self.oams_idx)
+        except Exception as e:
+            logging.error("OAMS[%d]: Failed to clear errors on ready: %s", self.oams_idx, e)
+
     def get_spool_status(self, bay_index):
         return self.f1s_hes_value[bay_index]
             
     def clear_errors(self):
+        """Clear all error states including LED errors and action status."""
         for i in range(4):
             self.set_led_error(i, 0)
+
+        # Clear any stale action status from previous operations
+        self.action_status = None
+        self.action_status_code = None
+        self.action_status_value = None
+
+        # Re-determine current spool to ensure state is accurate
         self.current_spool = self.determine_current_spool()
             
     def set_led_error(self, idx, value):
@@ -855,4 +876,3 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
 def load_config_prefix(config):
     return OAMS(config)
-
