@@ -170,7 +170,7 @@ class OAMS:
                 )
                 service.attach_controller(self)
             except Exception:
-                logging.getLogger(__name__).exception(
+                logging.getLogger(__name__).error(
                     "Failed to register OAMS controller with AMSHardwareService"
                 )
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
