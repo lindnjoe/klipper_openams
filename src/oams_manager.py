@@ -1206,6 +1206,13 @@ class OAMSManager:
 
         spool_index = fps_state.current_spool_idx
         oams_name = fps_state.current_oams
+        afc = self._get_afc()
+        lane_obj = None
+        if afc and lane_name:
+            try:
+                lane_obj = afc.lanes.get(lane_name)
+            except Exception:
+                lane_obj = None
 
         fps_state.state = FPSLoadState.UNLOADED
         fps_state.following = False
@@ -1222,6 +1229,13 @@ class OAMSManager:
 
         self.logger.info("Cleared FPS state for %s (was lane %s, spool %s)", fps_name, lane_name, spool_index)
 
+        if lane_obj is not None:
+            try:
+                lane_obj.set_unloaded()
+                self.logger.info("Marked AFC lane %s as unloaded after runout on %s", lane_name, fps_name)
+            except Exception:
+                self.logger.error("Failed to mark AFC lane %s as unloaded after runout", lane_name)
+
         if AMSRunoutCoordinator is not None and oams_name and lane_name:
             try:
                 AMSRunoutCoordinator.notify_lane_tool_state(
@@ -1236,23 +1250,20 @@ class OAMSManager:
             except Exception:
                 self.logger.error("Failed to notify AFC coordinator about lane %s unload after runout", lane_name)
 
-        afc = self._get_afc()
-        if afc and lane_name:
+        if lane_obj is not None:
             try:
-                lane = afc.lanes.get(lane_name)
-                if lane and hasattr(lane, 'extruder_obj'):
-                    extruder = lane.extruder_obj
-                    extruder_name = getattr(extruder, 'name', None)
-                    if extruder_name and extruder_name.upper().startswith('AMS_'):
-                        sensor_name = extruder_name.replace('ams_', '').replace('AMS_', '')
-                        sensor = self.printer.lookup_object(f"filament_switch_sensor {sensor_name}", None)
-                        if sensor and hasattr(sensor, 'runout_helper'):
-                            eventtime = self.reactor.monotonic()
-                            sensor.runout_helper.note_filament_present(eventtime, is_filament_present=False)
-                            self.logger.info(
-                                "Set virtual sensor %s to False after runout (matching cross-extruder handling)",
-                                sensor_name
-                            )
+                extruder = getattr(lane_obj, 'extruder_obj', None)
+                extruder_name = getattr(extruder, 'name', None)
+                if extruder_name and extruder_name.upper().startswith('AMS_'):
+                    sensor_name = extruder_name.replace('ams_', '').replace('AMS_', '')
+                    sensor = self.printer.lookup_object(f"filament_switch_sensor {sensor_name}", None)
+                    if sensor and hasattr(sensor, 'runout_helper'):
+                        eventtime = self.reactor.monotonic()
+                        sensor.runout_helper.note_filament_present(eventtime, is_filament_present=False)
+                        self.logger.info(
+                            "Set virtual sensor %s to False after runout (matching cross-extruder handling)",
+                            sensor_name
+                        )
             except Exception:
                 self.logger.error("Failed to update virtual sensor for lane %s after runout", lane_name)
 
@@ -2253,6 +2264,8 @@ class OAMSManager:
 
                 # Load the target lane directly
                 if target_lane is None:
+                    # Only hit when neither same-FPS nor cross-extruder infinite runout targets
+                    # exist. Other runout modes follow the target-lane path below unchanged.
                     self.logger.info("No infinite runout target for %s on %s - clearing lane from toolhead and OAMS",
                                    source_lane_name or fps_name, fps_name)
 
