@@ -115,7 +115,7 @@ class AMSEventBus:
                 callback(event_type=event_type, **kwargs)
                 success_count += 1
             except Exception:
-                self.logger.exception("Event handler failed for '%s' (priority=%d)", 
+                self.logger.error("Event handler failed for '%s' (priority=%d)", 
                                     event_type, priority)
         
         return success_count
@@ -897,7 +897,7 @@ class AMSRunoutCoordinator:
             try:
                 unit.handle_runout_detected(spool_index, monitor, lane_name=lane_hint)
             except Exception:
-                unit.logger.exception("Failed to propagate OpenAMS runout to AFC unit %s", unit.name)
+                unit.logger.error("Failed to propagate OpenAMS runout to AFC unit %s", unit.name)
 
     @classmethod
     def notify_afc_error(cls, printer, name: str, message: str, *, pause: bool = False) -> None:
@@ -921,7 +921,7 @@ class AMSRunoutCoordinator:
                 logger = getattr(unit, "logger", None)
                 if logger is None:
                     logger = logging.getLogger(__name__)
-                logger.exception("Failed to deliver OpenAMS error '%s' to AFC unit %s", message, unit)
+                logger.error("Failed to deliver OpenAMS error '%s' to AFC unit %s", message, unit)
 
     @classmethod
     def notify_lane_tool_state(cls, printer, name: str, lane_name: str, *, loaded: bool, spool_index: Optional[int] = None, eventtime: Optional[float] = None) -> bool:
@@ -945,7 +945,7 @@ class AMSRunoutCoordinator:
                 if unit.handle_openams_lane_tool_state(lane_name, loaded, spool_index=spool_index, eventtime=eventtime):
                     handled = True
             except Exception:
-                unit.logger.exception("Failed to update AFC lane %s from OpenAMS tool state", lane_name)
+                unit.logger.error("Failed to update AFC lane %s from OpenAMS tool state", lane_name)
         return handled
 
     @classmethod
