@@ -1212,6 +1212,70 @@ class OAMSManager:
         fps_state.state = FPSLoadState.LOADED
         return False, message
 
+    def _clear_lane_on_runout(self, fps_name: str, fps_state: "FPSState", lane_name: Optional[str]) -> None:
+        """
+        Clear lane state from toolhead and OAMS when runout occurs without infinite spool target.
+
+        This ensures proper cleanup when a lane runs out and has no runout_lane configured.
+        Called after the runout sequence completes:
+        1. F1S sensor detects empty spool
+        2. 60mm PAUSE_DISTANCE allows hub to clear
+        3. Follower motor stopped when entering COASTING (hub already cleared)
+        4. PTFE amount coasts to toolhead
+        5. This method is called to clear state
+
+        Actions:
+        - Clears FPS state in OAMS manager (sets UNLOADED, updates follower state flag)
+        - Notifies AFC that lane is unloaded from toolhead
+        - Resets stuck spool and clog tracking
+
+        Note: Follower motor is already stopped by this point (stopped after hub cleared
+        during COASTING transition). This method just updates the state flags.
+
+        Args:
+            fps_name: Name of the FPS (e.g., "fps fps1")
+            fps_state: Current FPS state object
+            lane_name: Name of the lane that ran out (e.g., "lane7")
+        """
+        if not lane_name:
+            self.logger.warning("Cannot clear lane on runout - no lane name provided for %s", fps_name)
+            return
+
+        # Save spool index before clearing for AFC notification
+        spool_index = fps_state.current_spool_idx
+        oams_name = fps_state.current_oams
+
+        # Clear FPS state (matching _unload_filament_for_fps and cross-extruder clear logic)
+        fps_state.state = FPSLoadState.UNLOADED
+        fps_state.following = False
+        fps_state.direction = 0
+        fps_state.clog_restore_follower = False
+        fps_state.clog_restore_direction = 1
+        fps_state.since = self.reactor.monotonic()
+        fps_state.current_lane = None
+        fps_state.current_spool_idx = None
+        fps_state.current_oams = None
+        fps_state.reset_stuck_spool_state()
+        fps_state.reset_clog_tracker()
+        fps_state.reset_runout_positions()
+
+        self.logger.info("Cleared FPS state for %s (was lane %s, spool %s)", fps_name, lane_name, spool_index)
+
+        # Notify AFC via AMSRunoutCoordinator that lane is unloaded from toolhead
+        if AMSRunoutCoordinator is not None and oams_name and lane_name:
+            try:
+                AMSRunoutCoordinator.notify_lane_tool_state(
+                    self.printer,
+                    oams_name,
+                    lane_name,
+                    loaded=False,
+                    spool_index=spool_index,
+                    eventtime=fps_state.since
+                )
+                self.logger.info("Notified AFC that lane %s unloaded from toolhead after runout", lane_name)
+            except Exception:
+                self.logger.error("Failed to notify AFC about lane %s unload after runout", lane_name)
+
     def _load_filament_for_lane(self, lane_name: str) -> Tuple[bool, str]:
         """Load filament for a lane by deriving OAMS and bay from the lane's unit configuration.
 
@@ -2443,6 +2507,13 @@ class OAMSManager:
 
                 # Load the target lane directly
                 if target_lane is None:
+                    # No infinite runout target configured - clear the lane and pause
+                    self.logger.info("No infinite runout target for %s on %s - clearing lane from toolhead and OAMS",
+                                   source_lane_name or fps_name, fps_name)
+
+                    # Clear FPS state and notify AFC (similar to cross-extruder runout handling)
+                    self._clear_lane_on_runout(fps_name, fps_state, source_lane_name)
+
                     self.logger.error("No lane available to reload on %s", fps_name)
                     self._pause_printer_message(f"No lane available to reload on {fps_name}", fps_state.current_oams or active_oams)
                     if monitor:
@@ -2606,3 +2677,4 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
+
