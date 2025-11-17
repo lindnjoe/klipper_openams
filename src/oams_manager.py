@@ -1208,11 +1208,25 @@ class OAMSManager:
         oams_name = fps_state.current_oams
         afc = self._get_afc()
         lane_obj = None
+        afc_function = None
         if afc and lane_name:
             try:
                 lane_obj = afc.lanes.get(lane_name)
             except Exception:
                 lane_obj = None
+            afc_function = getattr(afc, "function", None)
+
+        if afc_function and lane_name:
+            try:
+                current_lane = afc_function.get_current_lane_obj()
+            except Exception:
+                current_lane = None
+            if current_lane is not None and getattr(current_lane, "name", None) == lane_name:
+                try:
+                    afc_function.unset_lane_loaded()
+                    self.logger.info("Unset AFC lane %s as loaded after runout", lane_name)
+                except Exception:
+                    self.logger.error("Failed to unset AFC lane %s as loaded after runout", lane_name)
 
         fps_state.state = FPSLoadState.UNLOADED
         fps_state.following = False
