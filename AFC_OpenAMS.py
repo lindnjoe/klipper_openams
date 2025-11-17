@@ -1461,6 +1461,20 @@ class afcAMS(afcUnit):
                                                         self.logger.info("Cross-Extruder: Notified AFC that lane {} unloaded".format(lane_name))
                                                     except Exception:
                                                         self.logger.error("Failed to notify AFC about lane {} unload".format(lane_name))
+
+                                                    # Also manually set the virtual tool sensor to False for AMS virtual extruders
+                                                    # This ensures virtual sensor (e.g., AMS_Extruder4) shows correct state
+                                                    try:
+                                                        if lane_extruder is not None:
+                                                            extruder_name = getattr(lane_extruder, 'name', None)
+                                                            if extruder_name and extruder_name.upper().startswith('AMS_'):
+                                                                sensor_name = extruder_name.replace('ams_', '').replace('AMS_', '')
+                                                                sensor = self.printer.lookup_object("filament_switch_sensor {}".format(sensor_name), None)
+                                                                if sensor and hasattr(sensor, 'runout_helper'):
+                                                                    sensor.runout_helper.note_filament_present(self.reactor.monotonic(), is_filament_present=False)
+                                                                    self.logger.info("Cross-Extruder: Set virtual sensor {} to False after cross-extruder runout".format(sensor_name))
+                                                    except Exception:
+                                                        self.logger.error("Failed to update virtual sensor for lane {} during cross-extruder runout".format(lane_name))
                                                 else:
                                                     self.logger.warning("Cross-Extruder: Could not find FPS state for {}".format(fps_name))
                                             else:
