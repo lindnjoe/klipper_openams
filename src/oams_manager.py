@@ -1191,26 +1191,11 @@ class OAMSManager:
             if lane_name:
                 try:
                     AMSRunoutCoordinator.notify_lane_tool_state(self.printer, fps_state.current_oams or oams.name, lane_name, loaded=False, spool_index=spool_index, eventtime=fps_state.since)
+                    # This triggers AFC's _apply_lane_sensor_state() which:
+                    # - Handles shared prep/load lanes properly via _update_shared_lane()
+                    # - Updates virtual sensor via _mirror_lane_to_virtual_sensor()
                 except Exception:
                     self.logger.error("Failed to notify AFC that lane %s unloaded on %s", lane_name, fps_name)
-
-                # Also set virtual sensor to False for AMS virtual extruders
-                try:
-                    afc = self._get_afc()
-                    if afc:
-                        lane = afc.lanes.get(lane_name)
-                        if lane and hasattr(lane, 'extruder_obj'):
-                            extruder = lane.extruder_obj
-                            extruder_name = getattr(extruder, 'name', None)
-                            if extruder_name and extruder_name.upper().startswith('AMS_'):
-                                sensor_name = extruder_name.replace('ams_', '').replace('AMS_', '')
-                                sensor = self.printer.lookup_object(f"filament_switch_sensor {sensor_name}", None)
-                                if sensor and hasattr(sensor, 'runout_helper'):
-                                    eventtime = self.reactor.monotonic()
-                                    sensor.runout_helper.note_filament_present(eventtime, is_filament_present=False)
-                                    self.logger.info("Set virtual sensor %s to False after unload of lane %s", sensor_name, lane_name)
-                except Exception:
-                    self.logger.error("Failed to update virtual sensor for lane %s after unload", lane_name)
 
             # Clear LED error state if stuck spool was active before resetting state
             if fps_state.stuck_spool_active and oams is not None and spool_index is not None:
@@ -1280,6 +1265,10 @@ class OAMSManager:
         self.logger.info("Cleared FPS state for %s (was lane %s, spool %s)", fps_name, lane_name, spool_index)
 
         # Notify AFC that lane is unloaded from toolhead
+        # This triggers AFC's _apply_lane_sensor_state() which:
+        # - Handles shared prep/load lanes properly via _update_shared_lane()
+        # - Updates virtual sensor via _mirror_lane_to_virtual_sensor()
+        # - Calls lane.unit_obj.lane_unloaded() for proper cleanup
         if AMSRunoutCoordinator is not None and oams_name and lane_name:
             try:
                 AMSRunoutCoordinator.notify_lane_tool_state(
@@ -1293,36 +1282,6 @@ class OAMSManager:
                 self.logger.info("Notified AFC coordinator that lane %s unloaded from toolhead after runout", lane_name)
             except Exception:
                 self.logger.error("Failed to notify AFC coordinator about lane %s unload after runout", lane_name)
-
-        # Also call AFC's lane unload command to ensure AFC state is fully updated
-        # This is necessary because AMSRunoutCoordinator notification alone may not update all AFC state
-        afc = self._get_afc()
-        if afc and lane_name:
-            try:
-                gcode = self.printer.lookup_object("gcode")
-                # Use SET_LANE_UNLOADED to update AFC's internal lane state
-                gcode.run_script(f"SET_LANE_UNLOADED LANE={lane_name}")
-                self.logger.info("Called SET_LANE_UNLOADED for lane %s after runout", lane_name)
-            except Exception:
-                self.logger.error("Failed to call SET_LANE_UNLOADED for lane %s after runout", lane_name)
-
-            # Also manually set the virtual tool sensor to False (filament not detected)
-            # This ensures the AMS virtual sensor (e.g., AMS_Extruder4) shows correct state
-            try:
-                lane = afc.lanes.get(lane_name)
-                if lane and hasattr(lane, 'extruder_obj'):
-                    extruder = lane.extruder_obj
-                    extruder_name = getattr(extruder, 'name', None)
-                    if extruder_name and extruder_name.upper().startswith('AMS_'):
-                        # Try to get the virtual sensor
-                        sensor_name = extruder_name.replace('ams_', '').replace('AMS_', '')
-                        sensor = self.printer.lookup_object(f"filament_switch_sensor {sensor_name}", None)
-                        if sensor and hasattr(sensor, 'runout_helper'):
-                            eventtime = self.reactor.monotonic()
-                            sensor.runout_helper.note_filament_present(eventtime, is_filament_present=False)
-                            self.logger.info("Set virtual sensor %s to False (filament not detected) after runout", sensor_name)
-            except Exception:
-                self.logger.error("Failed to update virtual sensor state for lane %s after runout", lane_name)
 
     def _load_filament_for_lane(self, lane_name: str) -> Tuple[bool, str]:
         """Load filament for a lane by deriving OAMS and bay from the lane's unit configuration.
