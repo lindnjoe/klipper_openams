@@ -1932,7 +1932,7 @@ class afcAMS(afcUnit):
                 target_extruder = getattr(target_lane.extruder_obj, "name", None) if hasattr(target_lane, "extruder_obj") else None
                 is_same_fps = (source_extruder == target_extruder and source_extruder is not None)
 
-        # For both same-extruder and cross-extruder runouts: Set runout flag and let sensor sync handle the states
+        # For all runouts: Set runout flag and let sensor sync handle the states
         # The f1s sensors update in real-time and should naturally report False when filament clears
         # The runout flag prevents sensor sync from overwriting empty->True during runout handling
         try:
@@ -1940,10 +1940,13 @@ class afcAMS(afcUnit):
                 lane._oams_runout_detected = False
             lane._oams_runout_detected = True
 
-            # Mark whether this is a cross-extruder runout for later handling
-            lane._oams_cross_extruder_runout = not is_same_fps
+            # Only mark as cross-extruder if there IS a runout target AND it's a different FPS
+            # Regular runouts (no infinite spool) should NOT be marked as cross-extruder
+            lane._oams_cross_extruder_runout = (runout_lane_name is not None and not is_same_fps)
 
-            if is_same_fps:
+            if runout_lane_name is None:
+                self.logger.info("Regular runout detected for lane {} (no infinite spool configured) - will clear lane and pause".format(lane.name))
+            elif is_same_fps:
                 self.logger.info("Same-extruder runout: Marked lane {} for runout (OpenAMS handling reload, sensors sync naturally)".format(lane.name))
             else:
                 self.logger.info("Cross-extruder runout: Marked lane {} for runout (AFC will handle tool change, will clear old extruder during LANE_UNLOAD)".format(lane.name))
