@@ -1283,6 +1283,25 @@ class OAMSManager:
             except Exception:
                 self.logger.error("Failed to notify AFC coordinator about lane %s unload after runout", lane_name)
 
+        # Also manually set virtual sensor to False for AMS virtual extruders
+        # This matches the cross-extruder runout handling and ensures the sensor shows empty
+        afc = self._get_afc()
+        if afc and lane_name:
+            try:
+                lane = afc.lanes.get(lane_name)
+                if lane and hasattr(lane, 'extruder_obj'):
+                    extruder = lane.extruder_obj
+                    extruder_name = getattr(extruder, 'name', None)
+                    if extruder_name and extruder_name.upper().startswith('AMS_'):
+                        sensor_name = extruder_name.replace('ams_', '').replace('AMS_', '')
+                        sensor = self.printer.lookup_object(f"filament_switch_sensor {sensor_name}", None)
+                        if sensor and hasattr(sensor, 'runout_helper'):
+                            eventtime = self.reactor.monotonic()
+                            sensor.runout_helper.note_filament_present(eventtime, is_filament_present=False)
+                            self.logger.info("Set virtual sensor %s to False after runout (matching cross-extruder handling)", sensor_name)
+            except Exception:
+                self.logger.error("Failed to update virtual sensor for lane %s after runout", lane_name)
+
     def _load_filament_for_lane(self, lane_name: str) -> Tuple[bool, str]:
         """Load filament for a lane by deriving OAMS and bay from the lane's unit configuration.
 
