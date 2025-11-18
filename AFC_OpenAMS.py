@@ -1946,6 +1946,16 @@ class afcAMS(afcUnit):
 
             if runout_lane_name is None:
                 self.logger.info("Regular runout detected for lane {} (no infinite spool configured) - will clear lane and pause".format(lane.name))
+                # Schedule UNSET_LANE_LOADED to run after pause happens (delayed by 3 seconds)
+                def _clear_lane_after_pause(eventtime):
+                    try:
+                        self.gcode.run_script_from_command("UNSET_LANE_LOADED")
+                        self.logger.info("Executed UNSET_LANE_LOADED after pause for lane {}".format(lane.name))
+                    except Exception as e:
+                        self.logger.error("Failed to execute UNSET_LANE_LOADED after pause: {}".format(str(e)))
+
+                waketime = self.reactor.monotonic() + 3.0
+                self.reactor.register_callback(_clear_lane_after_pause, waketime)
             elif is_same_fps:
                 self.logger.info("Same-extruder runout: Marked lane {} for runout (OpenAMS handling reload, sensors sync naturally)".format(lane.name))
             else:
@@ -2051,6 +2061,12 @@ class afcAMS(afcUnit):
                 afc_function.unset_lane_loaded()
             except Exception:
                 self.logger.error("Failed to unset currently loaded lane %s", lane.name)
+            # Update virtual sensor before returning
+            if self._lane_matches_extruder(lane):
+                try:
+                    self._set_virtual_tool_sensor_state(False, eventtime, lane.name, lane_obj=lane)
+                except Exception:
+                    self.logger.error("Failed to mirror tool sensor state for unloaded lane %s", lane.name)
             return True
 
         if getattr(lane, "tool_loaded", False):
