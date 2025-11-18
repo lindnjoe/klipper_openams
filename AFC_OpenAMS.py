@@ -1943,6 +1943,8 @@ class afcAMS(afcUnit):
             # Only mark as cross-extruder if there IS a runout target AND it's a different FPS
             # Regular runouts (no infinite spool) should NOT be marked as cross-extruder
             lane._oams_cross_extruder_runout = (runout_lane_name is not None and not is_same_fps)
+            # Mark same-FPS runouts so sensor updates are blocked until swap completes
+            lane._oams_same_fps_runout = (runout_lane_name is not None and is_same_fps)
 
             if runout_lane_name is None:
                 self.logger.info("Regular runout detected for lane {} (no infinite spool configured) - will clear lane and pause".format(lane.name))
@@ -1982,10 +1984,22 @@ class afcAMS(afcUnit):
                 eventtime = 0.0
 
         lane_state = bool(loaded)
-        try:
-            self._apply_lane_sensor_state(lane, lane_state, eventtime)
-        except Exception:
-            self.logger.error("Failed to mirror OpenAMS lane sensor state for %s", lane.name)
+
+        # For same-FPS runouts, block sensor updates when going empty to prevent AFC from triggering infinite runout
+        # OpenAMS will handle the swap internally, then we'll sync sensors when new lane loads
+        is_same_fps_unload = getattr(lane, '_oams_same_fps_runout', False) and not lane_state
+        if is_same_fps_unload:
+            self.logger.info("Blocking sensor update for same-FPS runout on {} - OpenAMS handling swap".format(lane.name))
+        else:
+            # Clear the same-FPS flag if this is a load (swap completed)
+            if lane_state and getattr(lane, '_oams_same_fps_runout', False):
+                self.logger.info("Same-FPS swap completed for {}, resuming normal sensor sync".format(lane.name))
+                lane._oams_same_fps_runout = False
+
+            try:
+                self._apply_lane_sensor_state(lane, lane_state, eventtime)
+            except Exception:
+                self.logger.error("Failed to mirror OpenAMS lane sensor state for %s", lane.name)
 
         if self.hardware_service is not None:
             hub_state = getattr(lane, "loaded_to_hub", None)
