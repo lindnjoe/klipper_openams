@@ -1234,11 +1234,7 @@ class OAMSManager:
             fps_state: Current FPS state object
             lane_name: Name of the lane that ran out (e.g., "lane7")
         """
-        if not lane_name:
-            self.logger.warning("Cannot clear lane on runout - no lane name provided for %s", fps_name)
-            return
-
-        # Save spool index before clearing for AFC notification
+        # Save info before clearing
         spool_index = fps_state.current_spool_idx
         oams_name = fps_state.current_oams
 
@@ -1256,7 +1252,14 @@ class OAMSManager:
         fps_state.reset_clog_tracker()
         fps_state.reset_runout_positions()
 
-        self.logger.info("Cleared FPS state for %s (was lane %s, spool %s)", fps_name, lane_name, spool_index)
+        self.logger.info("Cleared FPS state for %s (was lane %s, oams %s, spool %s)",
+                        fps_name, lane_name or "<unknown>", oams_name, spool_index)
+
+        # Notify AFC only if we have lane name
+        if not lane_name:
+            self.logger.warning("Cannot notify AFC on runout - no lane name for %s (oams %s, spool %s)",
+                              fps_name, oams_name, spool_index)
+            return
 
         # Notify AFC that lane is unloaded from toolhead
         # This triggers AFC's _apply_lane_sensor_state() which:
@@ -2272,6 +2275,7 @@ class OAMSManager:
 
         monitor = self.runout_monitors.get(fps_name)
         if monitor is not None and monitor.state != OAMSRunoutState.MONITORING:
+            # Runout active - disable stuck spool detection
             if fps_state.stuck_spool_active and oams is not None and fps_state.current_spool_idx is not None:
                 try:
                     oams.set_led_error(fps_state.current_spool_idx, 0)
@@ -2279,6 +2283,16 @@ class OAMSManager:
                     self.logger.error("Failed to clear stuck spool LED while runout monitor inactive on %s", fps_name)
             fps_state.reset_stuck_spool_state(preserve_restore=fps_state.stuck_spool_restore_follower)
             return
+
+        # Debug: Log when pressure is very low to help diagnose stuck spool detection
+        if pressure <= 0.05 and is_printing and fps_state.following:
+            if fps_state.stuck_spool_start_time is None:
+                self.logger.debug("Stuck spool timer starting for %s - pressure %.3f (threshold %.3f)",
+                                fps_name, pressure, self.stuck_spool_pressure_threshold)
+            elif not fps_state.stuck_spool_active:
+                elapsed = now - fps_state.stuck_spool_start_time
+                self.logger.debug("Stuck spool timer running for %s - pressure %.3f, elapsed %.1fs (need %.1fs)",
+                                fps_name, pressure, elapsed, STUCK_SPOOL_DWELL)
 
         if not is_printing:
             if fps_state.stuck_spool_active and oams is not None and fps_state.current_spool_idx is not None:
@@ -2518,26 +2532,20 @@ class OAMSManager:
                     self.logger.error("No lane available to reload on %s", fps_name)
                     self._pause_printer_message(f"No lane available to reload on {fps_name}", fps_state.current_oams or active_oams)
 
-                    # Only manually clear lane for AMS extruders with VIRTUAL toolhead pins
-                    # Real physical toolhead sensors will naturally detect empty and clear the lane
-                    # Check FPS's extruder directly
-                    is_virtual_extruder = False
+                    # Always clear FPS state and notify AFC for regular runouts
+                    # This ensures OAMS shows the lane as unloaded
+                    self.logger.info("Regular runout - clearing FPS state and AFC for lane %s", source_lane_name or fps_name)
+                    self._clear_lane_on_runout(fps_name, fps_state, source_lane_name)
+
+                    # For physical toolhead sensors, the sensor will also naturally detect empty
+                    # For virtual sensors, the clear is the only way to update state
                     fps = self.fpss.get(fps_name)
                     if fps and hasattr(fps, 'extruder'):
-                        extruder = fps.extruder
-                        extruder_name = getattr(extruder, 'name', None)
+                        extruder_name = getattr(fps.extruder, 'name', None)
                         if extruder_name and extruder_name.upper().startswith('AMS_'):
-                            is_virtual_extruder = True
-                            self.logger.info("Detected virtual extruder %s for %s", extruder_name, fps_name)
-
-                    if is_virtual_extruder:
-                        self.logger.info("Virtual extruder lane %s - manually clearing from OAMS and AFC", source_lane_name or fps_name)
-                        self._clear_lane_on_runout(fps_name, fps_state, source_lane_name)
-                        # Note: Do NOT call _ensure_followers_for_loaded_hubs() here
-                        # That would re-associate the FPS with a hub bay, undoing the clear
-                        # The FPS should remain UNLOADED until explicitly loaded
-                    else:
-                        self.logger.info("Physical toolhead sensor lane %s - will clear naturally when sensor detects empty", source_lane_name or fps_name)
+                            self.logger.info("Virtual extruder %s - state cleared via notification", extruder_name)
+                        else:
+                            self.logger.info("Physical sensor extruder - will also detect empty naturally")
 
                     if monitor:
                         monitor.paused()
