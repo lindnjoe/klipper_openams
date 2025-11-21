@@ -226,10 +226,16 @@ class OAMSRunoutMonitor:
                 self.runout_after_position = traveled_distance_after_bldc_clear
                 try:
                     path_length = getattr(self.oams[fps_state.current_oams], "filament_path_length", 0.0)
+                    if not path_length:
+                        raise ValueError("filament_path_length is missing or zero")
                 except Exception:
-                    logging.exception("OAMS: Failed to read filament path length while coasting on %s", self.fps_name)
-                    return eventtime + MONITOR_ENCODER_PERIOD
-                
+                    fallback_length = 500.0
+                    logging.exception(
+                        "OAMS: Failed to read filament path length while coasting on %s; using %.1fmm fallback",
+                        self.fps_name, fallback_length,
+                    )
+                    path_length = fallback_length
+
                 effective_path_length = (path_length / FILAMENT_PATH_LENGTH_FACTOR if path_length else 0.0)
                 consumed_with_margin = (self.runout_after_position + PAUSE_DISTANCE + self.reload_before_toolhead_distance)
 
@@ -2452,3 +2458,4 @@ class OAMSManager:
 
 def load_config(config):
     return OAMSManager(config)
+
