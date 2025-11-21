@@ -313,41 +313,6 @@ class afcAMS(afcUnit):
         self.gcode.register_mux_command("AFC_OAMS_CALIBRATE_PTFE", "UNIT", self.name, self.cmd_AFC_OAMS_CALIBRATE_PTFE, desc="calibrate the OpenAMS PTFE length for a specific lane")
         self.gcode.register_mux_command("UNIT_PTFE_CALIBRATION", "UNIT", self.name, self.cmd_UNIT_PTFE_CALIBRATION, desc="show OpenAMS PTFE calibration menu")
 
-        # Monkey patch LANE_UNLOAD to use AMS_EJECT for AMS lanes
-        self._install_lane_unload_patch()
-
-    def _install_lane_unload_patch(self):
-        """Monkey patch AFC.cmd_LANE_UNLOAD to redirect AMS lanes to AMS_EJECT."""
-        # Only patch once, on first AMS unit initialization
-        if hasattr(self.afc.__class__, '_original_cmd_LANE_UNLOAD'):
-            return  # Already patched
-
-        # Store reference to original method
-        original_cmd_LANE_UNLOAD = self.afc.cmd_LANE_UNLOAD
-        self.afc.__class__._original_cmd_LANE_UNLOAD = original_cmd_LANE_UNLOAD
-
-        # Create wrapper that intercepts AMS lane calls
-        def patched_cmd_LANE_UNLOAD(afc_self, gcmd):
-            """Wrapper for LANE_UNLOAD that redirects AMS lanes to AMS_EJECT."""
-            lane_name = gcmd.get('LANE', None)
-            if lane_name and lane_name in afc_self.lanes:
-                cur_lane = afc_self.lanes[lane_name]
-                unit_obj = getattr(cur_lane, 'unit_obj', None)
-
-                # Check if this is an AMS lane
-                if isinstance(unit_obj, afcAMS):
-                    afc_self.logger.info("LANE_UNLOAD: {} is an AMS lane, using AMS_EJECT logic".format(lane_name))
-                    # Call the AMS unit's cmd_AMS_EJECT method
-                    unit_obj.cmd_AMS_EJECT(gcmd)
-                    return
-
-            # Not an AMS lane, use original method
-            original_cmd_LANE_UNLOAD(gcmd)
-
-        # Replace the method on the AFC instance
-        self.afc.cmd_LANE_UNLOAD = MethodType(patched_cmd_LANE_UNLOAD, self.afc)
-        self.logger.info("Monkey patched LANE_UNLOAD to use AMS_EJECT for AMS lanes")
-
     def _is_openams_unit(self):
         """Check if this unit has OpenAMS hardware available."""
         return self.oams is not None
@@ -533,23 +498,23 @@ class afcAMS(afcUnit):
             if idx >= 0 and self.registry is not None:
                 lane_name = getattr(lane, "name", None)
                 unit_name = self.oams_name or self.name
-                group = getattr(lane, "map", None)
-                if not group and lane_name:
+                lane_map = getattr(lane, "map", None)
+                if not lane_map and lane_name:
                     lane_num = ''.join(ch for ch in str(lane_name) if ch.isdigit())
                     if lane_num:
-                        group = f"T{lane_num}"
+                        lane_map = f"T{lane_num}"
                     else:
-                        group = str(lane_name)
+                        lane_map = str(lane_name)
 
                 extruder_name = getattr(lane, "extruder_name", None) or getattr(self, "extruder", None)
 
-                if lane_name and group and extruder_name:
+                if lane_name and extruder_name:
                     try:
                         self.registry.register_lane(
                             lane_name=lane_name,
                             unit_name=unit_name,
                             spool_index=idx,
-                            group=group,
+                            lane_map=lane_map,
                             extruder=extruder_name,
                             fps_name=None,
                             hub_name=getattr(lane, "hub", None),
@@ -963,12 +928,12 @@ class afcAMS(afcUnit):
         parts = normalized.replace("_", " ").replace("-", " ").split()
         return any(part.lower() == self.name.lower() for part in parts)
 
-    def _normalize_group_name(self, group: Optional[str]) -> Optional[str]:
-        """Return a trimmed filament group token for alias comparison."""
-        if not group or not isinstance(group, str):
+    def _normalize_lane_map(self, lane_map: Optional[str]) -> Optional[str]:
+        """Return a trimmed lane-map token for alias comparison."""
+        if not lane_map or not isinstance(lane_map, str):
             return None
 
-        normalized = group.strip()
+        normalized = lane_map.strip()
         if not normalized:
             return None
 
@@ -991,7 +956,7 @@ class afcAMS(afcUnit):
             return lane.name
 
         lowered = lookup.lower()
-        normalized_lookup = self._normalize_group_name(lookup)
+        normalized_lookup = self._normalize_lane_map(lookup)
         for lane in self.lanes.values():
             if lane.name.lower() == lowered:
                 return lane.name
@@ -1000,7 +965,7 @@ class afcAMS(afcUnit):
             if isinstance(lane_map, str) and lane_map.lower() == lowered:
                 return lane.name
 
-            canonical_map = self._normalize_group_name(lane_map)
+            canonical_map = self._normalize_lane_map(lane_map)
             if (canonical_map is not None and normalized_lookup is not None and canonical_map.lower() == normalized_lookup.lower()):
                 return lane.name
 
