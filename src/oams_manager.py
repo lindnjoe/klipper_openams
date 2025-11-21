@@ -186,6 +186,17 @@ class OAMSRunoutMonitor:
                             logging.getLogger(__name__).exception("Failed to notify AFC about OpenAMS runout")
 
             elif self.state == OAMSRunoutState.DETECTED:
+                # Check if cross-extruder swap was already handled by AFC
+                afc = self._get_afc_from_manager()
+                if afc and self.latest_lane_name:
+                    lane = afc.lanes.get(self.latest_lane_name)
+                    if lane and getattr(lane, '_oams_cross_extruder_runout', False):
+                        logging.info("OAMS: Cross-extruder swap already handled for %s, resetting monitor", self.fps_name)
+                        fps_state.reset_runout_positions()
+                        self.reset()
+                        self.start()
+                        return eventtime + MONITOR_ENCODER_PERIOD
+
                 traveled_distance = fps.extruder.last_position - self.runout_position
                 if traveled_distance >= PAUSE_DISTANCE:
                     logging.info("OAMS: Pause complete, coasting the follower.")
@@ -200,6 +211,17 @@ class OAMSRunoutMonitor:
                     self.state = OAMSRunoutState.COASTING
 
             elif self.state == OAMSRunoutState.COASTING:
+                # Check if cross-extruder swap was already handled by AFC
+                afc = self._get_afc_from_manager()
+                if afc and self.latest_lane_name:
+                    lane = afc.lanes.get(self.latest_lane_name)
+                    if lane and getattr(lane, '_oams_cross_extruder_runout', False):
+                        logging.info("OAMS: Cross-extruder swap already handled for %s, resetting monitor", self.fps_name)
+                        fps_state.reset_runout_positions()
+                        self.reset()
+                        self.start()
+                        return eventtime + MONITOR_ENCODER_PERIOD
+
                 traveled_distance_after_bldc_clear = max(fps.extruder.last_position - self.bldc_clear_position, 0.0)
                 self.runout_after_position = traveled_distance_after_bldc_clear
                 try:
@@ -220,6 +242,13 @@ class OAMSRunoutMonitor:
         
         self._timer_callback = _monitor_runout
         self.timer = None  # Don't register timer until start() is called
+
+    def _get_afc_from_manager(self):
+        """Get AFC object from printer."""
+        try:
+            return self.printer.lookup_object('AFC')
+        except Exception:
+            return None
 
     def start(self) -> None:
         if self.timer is None:
@@ -307,6 +336,9 @@ class FPSState:
         self.consecutive_idle_polls: int = 0
         self.idle_backoff_level: int = 0  # 0-3 for exponential backoff (1x, 2x, 4x, 8x)
         self.last_state_change: Optional[float] = None
+
+        # Safety: Track if follower was disabled due to all hubs empty
+        self.all_hubs_empty_follower_disabled: bool = False
 
     def record_encoder_sample(self, value: int) -> Optional[int]:
         """Record encoder sample and return diff if we have 2 samples."""
@@ -928,8 +960,20 @@ class OAMSManager:
 
     def _resolve_lane_for_state(self, fps_state: 'FPSState', lane_name: Optional[str], afc) -> Tuple[Optional[str], Optional[str]]:
         """Resolve lane name from FPS state. Returns (lane_name, None) - group support removed."""
-        # If lane_name provided, return it
+        # If lane_name provided, try to resolve it
         if lane_name:
+            # First, check if it's already a valid lane name
+            if lane_name in afc.lanes:
+                return lane_name, None
+
+            # If not, it might be a tool/map name (like "T11") - search for matching lane
+            for actual_lane_name, lane_obj in afc.lanes.items():
+                lane_map = getattr(lane_obj, "map", None)
+                if lane_map and lane_map == lane_name:
+                    self.logger.info("Resolved tool name %s to lane %s", lane_name, actual_lane_name)
+                    return actual_lane_name, None
+
+            # If we still haven't found it, return it as-is (for backward compatibility)
             return lane_name, None
 
         # Try to get from current state (legacy location-based lookup)
@@ -987,24 +1031,29 @@ class OAMSManager:
         """
         current_lane = fps_state.current_lane
         if not current_lane:
+            self.logger.error("DEBUG: _get_infinite_runout_target_lane: No current_lane in fps_state for %s", fps_name)
             return None, None, False, None
 
         afc = self._get_afc()
         if afc is None:
+            self.logger.error("DEBUG: _get_infinite_runout_target_lane: No AFC object for %s", fps_name)
             return None, None, False, None
 
         lane_name, _ = self._resolve_lane_for_state(fps_state, current_lane, afc)
 
         if not lane_name:
+            self.logger.error("DEBUG: _get_infinite_runout_target_lane: Could not resolve lane_name for %s (current_lane=%s)", fps_name, current_lane)
             return None, None, False, None
 
         lanes = getattr(afc, "lanes", {})
         lane = afc.lanes.get(lane_name)
         if lane is None:
+            self.logger.error("DEBUG: _get_infinite_runout_target_lane: Lane %s not found in afc.lanes for %s", lane_name, fps_name)
             return None, None, False, lane_name
 
         runout_lane_name = getattr(lane, "runout_lane", None)
         if not runout_lane_name:
+            self.logger.error("DEBUG: _get_infinite_runout_target_lane: No runout_lane configured for %s on %s", lane_name, fps_name)
             return None, None, False, lane_name
 
         target_lane = afc.lanes.get(runout_lane_name)
@@ -1080,6 +1129,8 @@ class OAMSManager:
             self.logger.warning("AFC runout lane %s referenced by %s is unavailable", runout_target, source_lane_name)
             return False
 
+        # Cross-extruder runouts are handled earlier in the reload callback
+        # This method only handles same-FPS runouts via AFC's _perform_infinite_runout()
         try:
             lane._perform_infinite_runout()
         except Exception:
@@ -1838,6 +1889,24 @@ class OAMSManager:
                 self.logger.exception("Failed to read sensors for %s", fps_name)
                 return eventtime + MONITOR_ENCODER_PERIOD_IDLE
 
+            # Safety check: Disable follower if all hubs are empty
+            if oams and hes_values:
+                all_hubs_empty = all(not bool(hes_val) for hes_val in hes_values)
+
+                if all_hubs_empty and not fps_state.all_hubs_empty_follower_disabled:
+                    # All hubs are empty - disable follower for safety
+                    try:
+                        oams.set_oams_follower(0, 1)
+                        fps_state.following = False
+                        fps_state.all_hubs_empty_follower_disabled = True
+                        self.logger.info("SAFETY: All hubs empty on %s - disabled follower", fps_name)
+                    except Exception:
+                        self.logger.exception("Failed to disable follower on %s when all hubs empty", fps_name)
+                elif not all_hubs_empty and fps_state.all_hubs_empty_follower_disabled:
+                    # Hubs are no longer all empty - clear the flag
+                    fps_state.all_hubs_empty_follower_disabled = False
+                    self.logger.info("Hubs on %s are no longer all empty - follower can be enabled again", fps_name)
+
             now = self.reactor.monotonic()
             state_changed = False
 
@@ -1889,7 +1958,7 @@ class OAMSManager:
             self.logger.debug("OAMS[%d] Unload Monitor: Encoder diff %d", getattr(oams, "oams_idx", -1), encoder_diff)
         
         if encoder_diff < MIN_ENCODER_DIFF:
-            lane_label = fps_state.current_lane or fps_name
+            group_label = fps_state.current_lane or fps_name
             spool_label = str(fps_state.current_spool_idx) if fps_state.current_spool_idx is not None else "unknown"
             
             # Abort the current unload operation cleanly
@@ -1914,7 +1983,7 @@ class OAMSManager:
             fps_state.stuck_spool_active = True
             fps_state.stuck_spool_start_time = None
             
-            self.logger.info("Spool appears stuck while unloading %s spool %s - letting retry logic handle it", lane_label, spool_label)
+            self.logger.info("Spool appears stuck while unloading %s spool %s - letting retry logic handle it", group_label, spool_label)
 
     def _check_load_speed(self, fps_name, fps_state, fps, oams, encoder_value, pressure, now):
         """Check load speed using optimized encoder tracking and FPS pressure monitoring."""
@@ -1953,7 +2022,7 @@ class OAMSManager:
             stuck_reason = f"FPS pressure {pressure:.2f} >= {self.load_fps_stuck_threshold:.2f} (filament not engaging)"
 
         if stuck_detected:
-            lane_label = fps_state.current_lane or fps_name
+            group_label = fps_state.current_lane or fps_name
             spool_label = str(fps_state.current_spool_idx) if fps_state.current_spool_idx is not None else "unknown"
 
             # Abort the current load operation cleanly
@@ -1979,7 +2048,7 @@ class OAMSManager:
             fps_state.stuck_spool_start_time = None
 
             self.logger.info("Spool appears stuck while loading %s spool %s (%s) - letting retry logic handle it",
-                           lane_label, spool_label, stuck_reason)
+                           group_label, spool_label, stuck_reason)
 
     def _check_stuck_spool(self, fps_name, fps_state, fps, oams, pressure, hes_values, now):
         """Check for stuck spool conditions (OPTIMIZED)."""
@@ -2170,9 +2239,35 @@ class OAMSManager:
             )
 
             def _reload_callback(fps_name=fps_name, fps_state=self.current_state.fps_state[fps_name]):
+                self.logger.error("DEBUG: ===== RELOAD CALLBACK CALLED for %s =====", fps_name)
                 monitor = self.runout_monitors.get(fps_name)
                 source_lane_name = fps_state.current_lane
                 active_oams = fps_state.current_oams
+
+                self.logger.error("DEBUG: RELOAD CALLBACK: fps_name=%s, current_lane=%s, current_oams=%s",
+                               fps_name, source_lane_name, active_oams)
+
+                # Check if cross-extruder swap was already handled immediately by AFC
+                afc = self._get_afc()
+                if afc and source_lane_name:
+                    lane = afc.lanes.get(source_lane_name)
+                    if lane:
+                        cross_extruder_flag = getattr(lane, '_oams_cross_extruder_runout', False)
+                        same_fps_flag = getattr(lane, '_oams_same_fps_runout', False)
+                        self.logger.error("DEBUG: RELOAD CALLBACK: Lane %s flags - cross_extruder=%s, same_fps=%s",
+                                       source_lane_name, cross_extruder_flag, same_fps_flag)
+                        if cross_extruder_flag:
+                            self.logger.error("DEBUG: RELOAD CALLBACK: Cross-extruder swap for %s was already handled immediately, skipping", source_lane_name)
+                            # Reset and restart monitoring
+                            fps_state.reset_runout_positions()
+                            if monitor:
+                                monitor.reset()
+                                monitor.start()
+                            return
+
+                self.logger.error("DEBUG: RELOAD CALLBACK: fps_name=%s, source_lane=%s (same-FPS or regular runout)",
+                               fps_name, source_lane_name)
+
                 target_lane_map, target_lane, delegate_to_afc, source_lane = self._get_infinite_runout_target_lane(fps_name, fps_state)
                 source_lane_name = fps_state.current_lane
 
