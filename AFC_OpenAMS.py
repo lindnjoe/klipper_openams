@@ -1950,10 +1950,86 @@ class afcAMS(afcUnit):
         except Exception:
             self.logger.error("Failed to mark lane {} for runout tracking".format(lane.name))
 
-        # NOTE: We do NOT call lane.handle_load_runout() here
-        # This would trigger infinite runout immediately when OpenAMS detects the spool is empty
-        # Instead, we let the filament coast naturally and AFC's prep/load sensor will detect
-        # the runout when the filament actually clears, triggering infinite runout at the proper time
+        # NOTE: For cross-extruder runouts, we now delegate to lane/AFC handlers.
+        # For same-FPS runouts, we let the filament coast naturally and AFC's prep/load sensor
+        # will detect the runout when the filament actually clears.
+        # We no longer call UNSET_LANE_LOADED as a fallback - AFC handles tool changes directly.
+        
+        # Only attempt delegation for cross-extruder runouts
+        if not is_same_fps:
+            delegated = False
+            
+            # Try lane-level handlers first
+            lane_handler_names = ["handle_load_runout", "handle_load_rounout", "handle_runout"]
+            for handler_name in lane_handler_names:
+                handler = getattr(lane, handler_name, None)
+                if callable(handler):
+                    try:
+                        # Try calling with eventtime first
+                        try:
+                            handler(eventtime)
+                            self.logger.info("Cross-FPS runout: delegated runout handling to lane.%s for %s", handler_name, lane.name)
+                            delegated = True
+                            break
+                        except TypeError:
+                            # Try calling with lane
+                            try:
+                                handler(lane)
+                                self.logger.info("Cross-FPS runout: delegated runout handling to lane.%s for %s", handler_name, lane.name)
+                                delegated = True
+                                break
+                            except TypeError:
+                                # Try calling with no args
+                                try:
+                                    handler()
+                                    self.logger.info("Cross-FPS runout: delegated runout handling to lane.%s for %s", handler_name, lane.name)
+                                    delegated = True
+                                    break
+                                except TypeError:
+                                    pass  # Continue to next handler
+                    except Exception:
+                        self.logger.exception("Exception when calling lane.%s for %s", handler_name, lane.name)
+                        # Continue to try other handlers
+            
+            # If no lane handler succeeded, try AFC-level handlers
+            if not delegated:
+                afc_function = getattr(self.afc, "function", None)
+                if afc_function is not None:
+                    afc_handler_names = ["handle_load_runout", "handle_load_rounout", "handle_runout", "handle_lane_runout"]
+                    for handler_name in afc_handler_names:
+                        handler = getattr(afc_function, handler_name, None)
+                        if callable(handler):
+                            try:
+                                # Try calling with lane
+                                try:
+                                    handler(lane)
+                                    self.logger.info("Cross-FPS runout: delegated runout handling to afc.function.%s for %s", handler_name, lane.name)
+                                    delegated = True
+                                    break
+                                except TypeError:
+                                    # Try calling with lane name
+                                    try:
+                                        handler(lane.name)
+                                        self.logger.info("Cross-FPS runout: delegated runout handling to afc.function.%s for %s", handler_name, lane.name)
+                                        delegated = True
+                                        break
+                                    except TypeError:
+                                        # Try calling with no args
+                                        try:
+                                            handler()
+                                            self.logger.info("Cross-FPS runout: delegated runout handling to afc.function.%s for %s", handler_name, lane.name)
+                                            delegated = True
+                                            break
+                                        except TypeError:
+                                            pass  # Continue to next handler
+                            except Exception:
+                                self.logger.exception("Exception when calling afc.function.%s for %s", handler_name, lane.name)
+                                # Continue to try other handlers
+            
+            # If no handler was found or all failed, log a warning
+            # We do NOT call UNSET_LANE_LOADED as a fallback
+            if not delegated:
+                self.logger.warning("Cross-FPS runout: No AFC/lane runout handler available for %s; not clearing toolhead automatically", lane.name)
 
     def handle_openams_lane_tool_state(self, lane_name: str, loaded: bool, *, spool_index: Optional[int] = None, eventtime: Optional[float] = None) -> bool:
         """Update lane/tool state in response to OpenAMS hardware events."""
