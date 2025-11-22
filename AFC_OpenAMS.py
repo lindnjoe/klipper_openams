@@ -1988,7 +1988,7 @@ class afcAMS(afcUnit):
                                 except TypeError:
                                     pass  # Continue to next handler
                     except Exception:
-                        self.logger.exception("Exception when calling lane.%s for %s", handler_name, lane.name)
+                        self.logger.error("Exception when calling lane.%s for %s", handler_name, lane.name)
                         # Continue to try other handlers
             
             # If no lane handler succeeded, try AFC-level handlers
@@ -2023,7 +2023,7 @@ class afcAMS(afcUnit):
                                         except TypeError:
                                             pass  # Continue to next handler
                             except Exception:
-                                self.logger.exception("Exception when calling afc.function.%s for %s", handler_name, lane.name)
+                                self.logger.error("Exception when calling afc.function.%s for %s", handler_name, lane.name)
                                 # Continue to try other handlers
             
             # If no handler was found or all failed, log a warning
