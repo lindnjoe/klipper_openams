@@ -3102,6 +3102,56 @@ class afcAMS(afcUnit):
             except Exception as e:
                 self.logger.error(f"Failed to update lane snapshot for {lane.name}: {e}")
 
+    def sync_openams_sensors(self, eventtime, *, sync_hub=True, sync_f1s=False, allow_lane_clear=True):
+        """Periodic level-based sync of OAMS hardware sensors to AFC lane state.
+
+        Called by oams_manager's monitoring loop via _sync_openams_sensors_for_oams().
+        Unlike _on_hub_changed/_on_f1s_changed (which are edge-triggered and only fire
+        on sensor value *changes*), this method re-reads the actual hardware values and
+        corrects any drift -- e.g., when set_unloaded() clears loaded_to_hub but the hub
+        sensor is still True.
+        """
+        if self.oams is None:
+            return
+
+        hub_values = getattr(self.oams, "hub_hes_value", None)
+        f1s_values = getattr(self.oams, "f1s_hes_value", None)
+
+        for lane in self.lanes.values():
+            try:
+                spool_idx = self._get_openams_spool_index(lane)
+                if spool_idx is None or spool_idx < 0:
+                    continue
+
+                # Sync hub sensor -> loaded_to_hub
+                if sync_hub and hub_values is not None and spool_idx < len(hub_values):
+                    hw_hub = bool(hub_values[spool_idx])
+                    current = getattr(lane, "loaded_to_hub", False)
+                    if hw_hub != current:
+                        lane.loaded_to_hub = hw_hub
+                        self.logger.debug(
+                            f"sync_openams_sensors: corrected loaded_to_hub "
+                            f"{current}->{hw_hub} for {lane.name}"
+                        )
+
+                # Sync F1S sensor -> load_state/prep_state (only when allowed)
+                if sync_f1s and f1s_values is not None and spool_idx < len(f1s_values):
+                    hw_f1s = bool(f1s_values[spool_idx])
+                    current_load = getattr(lane, "load_state", False)
+                    if hw_f1s != current_load:
+                        if hw_f1s or allow_lane_clear:
+                            share = getattr(lane, "ams_share_prep_load", False)
+                            if share:
+                                self._update_shared_lane(
+                                    lane, hw_f1s, eventtime,
+                                    allow_clear=allow_lane_clear,
+                                )
+                            else:
+                                lane.load_callback(eventtime, hw_f1s)
+                                lane.prep_callback(eventtime, hw_f1s)
+            except Exception as e:
+                self.logger.debug(f"sync_openams_sensors: error syncing {getattr(lane, 'name', '?')}: {e}")
+
     def _should_block_sensor_update_for_runout(self, lane, lane_val):
         """Check if sensor update should be blocked due to active runout.
 
