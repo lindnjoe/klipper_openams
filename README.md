@@ -1,74 +1,72 @@
-# OpenAMS for Klipper (AFC Integration Fork)
+<img width="1024" height="1024" alt="OpenAMS" src="https://github.com/user-attachments/assets/7b515408-d0b3-437f-b0a4-8c7128d2e922" />
 
-Version `0.0.3`
+# OpenAMS for Klipper
 
-This repository provides the OpenAMS Klipper extras plus an AFC integration layer that maps OpenAMS hardware into Armored Turtle AFC lanes.
+> **Version 0.0.3** — Lane-based AFC integration with event-driven monitoring
 
-## What is in this repo
+A Klipper integration for OpenAMS that enables multi-material printing with automatic filament management, runout detection, and intelligent retry logic.
 
-- Core OpenAMS Klipper modules (`src/*.py`) for:
-  - OAMS CAN-bus hardware control
-  - FPS pressure sensor handling
-  - OAMS manager orchestration (load/unload/retry/runout/clog logic)
-  - HDC1080 temperature/humidity support
-  - Moonraker status persistence client
-- AFC integration modules (`AFC_OpenAMS.py`, `openams_integration.py`) that are copied into AFC extras.
-- Configuration templates:
-  - `AFC_Oams.cfg` (OAMS, FPS, manager, sensor config)
-  - `AFC_AMS_1.cfg` (AFC lane/hub mapping)
-- Installer script (`install-openams.sh`) that symlinks OpenAMS extras/scripts into Klipper and appends moonraker/HDC1080 template entries.
+## Table of Contents
 
----
+- [Overview](#overview)
+- [Repository Structure](#repository-structure)
+- [Architecture](#architecture)
+- [What's New](#whats-new)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+  - [Install/Update AFC](#1-installupdate-afc)
+    - [Lane Architecture Primer](#lane-architecture-primer)
+    - [Install the AFC Add-On](#install-the-afc-add-on)
+    - [Stage AFC Configuration Templates](#stage-afc-configuration-templates)
+    - [AFC Hardware Configuration Checklist](#afc-hardware-configuration-checklist)
+  - [Install OpenAMS](#2-install-openams)
+    - [Switching to This Fork](#switching-to-this-fork)
+    - [Custom Installation Paths](#custom-installation-paths)
+  - [Apply AFC Integration Files](#3-apply-afc-integration-files)
+- [Configuration](#configuration)
+  - [OpenAMS Manager Settings](#openams-manager-settings)
+  - [OAMS Hardware Settings](#oams-hardware-settings)
+  - [FPS Configuration](#fps-configuration)
+  - [Retry Behavior](#retry-behavior)
+  - [Clog Detection Settings](#clog-detection-settings)
+  - [Advanced Detection Tunables](#advanced-detection-tunables)
+- [Optional Features](#optional-features)
+  - [Mainsail AFC Panel](#mainsail-afc-panel)
+- [Initial Calibration](#initial-calibration)
+- [Infinite Spooling](#infinite-spooling)
+- [Troubleshooting](#troubleshooting)
+  - [CAN Bus Debugging](#can-bus-debugging)
+- [Credits](#credits)
 
-## Current architecture (v0.0.3)
+## Overview
 
-### OpenAMS modules (installed to `klippy/extras`)
+OpenAMS provides automated filament handling for Klipper-based 3D printers. This fork integrates tightly with Armored Turtle's AFC (Automatic Filament Changer) add-on using a **lane-based architecture**. The combination delivers end-to-end multi-material automation—from AFC's physical filament routing to OpenAMS' retry logic, runout handling, and print-state awareness.
 
-- `oams.py` — OAMS hardware abstraction over CAN bus.
-- `fps.py` — filament pressure sensor driver.
-- `oams_manager.py` — central control logic for load/unload, retries, runout handling, and detection tunables.
-- `hdc1080.py` — HDC1080 environmental sensor driver.
-- `openams_moonraker.py` — writes manager state to Moonraker DB.
+### Full Integration at a Glance
 
-### AFC integration modules (installed to AFC extras)
+- **AFC** exposes lanes, runout sensors, and hub LEDs.
+- **OpenAMS** maps those AFC lanes into the AMS manager, applies retry and clog detection logic, and keeps Moonraker/Klipper informed of state changes.
+- **Optional services** like Spoolman enrich the integration with live spool metadata.
 
-- `AFC_OpenAMS.py` — integrates AFC lane workflows with OpenAMS manager and virtual sensors.
-- `openams_integration.py` — shared event bus, lane registry, hardware service, and manager facade.
+### Example Settings
 
----
+The snippets below show how the integration pieces fit together. Adjust lane names and MCU UUIDs to match your hardware.
 
-## Key implementation features currently present
+<details>
+<summary><strong>OpenAMS Manager</strong></summary>
 
-- Lane-based AFC integration (`[AFC_lane ...]`) tied to OpenAMS unit/spool positions.
-- Event-driven lane/sensor state propagation via shared integration helpers.
-- Configurable runout reload margin globally (`[oams_manager]`) and per FPS (`[fps ...]`).
-- Configurable clog and stuck-spool detection toggles and thresholds in `[oams_manager]`.
-- Moonraker DB persistence through `openams_moonraker.py`.
-- Optional Kalico mode support in FPS driver (`use_kalico`).
+```ini
+[oams_manager]
+# Optional: start loading replacement filament early
+reload_before_toolhead_distance: 0.0
 
----
+# Optional: lane-wide clog sensitivity (low/medium/high)
+clog_sensitivity: medium
 
-## Repository layout
-
-```text
-.
-├── AFC_AMS_1.cfg
-├── AFC_Oams.cfg
-├── AFC_OpenAMS.py
-├── openams_integration.py
-├── install-openams.sh
-├── scripts/
-│   └── canbus_logger.py
-├── src/
-│   ├── fps.py
-│   ├── hdc1080.py
-│   ├── oams.py
-│   ├── oams_manager.py
-│   └── openams_moonraker.py
-└── file_templates/
-    ├── HDC1080.cfg
-    ├── moonraker_update.txt
-    └── openams.service
+# Optional: enable/disable detection systems
+enable_clog_detection: True
+enable_stuck_spool_detection: True
 ```
 
 ---
