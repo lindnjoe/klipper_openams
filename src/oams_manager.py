@@ -1923,29 +1923,6 @@ class OAMSManager:
             extruder_name: Extruder name (e.g., "extruder5")
             afc: AFC object
         """
-        def _lane_spool_index(lane_obj) -> Optional[int]:
-            """Resolve a lane's 0-based spool index from AFC lane metadata."""
-            lane_index = getattr(lane_obj, 'index', None)
-            if lane_index is not None:
-                try:
-                    spool_idx = int(lane_index) - 1
-                    if spool_idx >= 0:
-                        return spool_idx
-                except (TypeError, ValueError):
-                    pass
-
-            lane_unit = getattr(lane_obj, 'unit', None)
-            if isinstance(lane_unit, str) and ':' in lane_unit:
-                _, slot_str = lane_unit.split(':', 1)
-                try:
-                    spool_idx = int(slot_str) - 1
-                    if spool_idx >= 0:
-                        return spool_idx
-                except (TypeError, ValueError):
-                    pass
-
-            return None
-
         # Check what AFC currently thinks is loaded
         current_lane_loaded = getattr(extruder_obj, 'lane_loaded', None)
 
@@ -1975,14 +1952,19 @@ class OAMSManager:
 
                         if oams_obj:
                             # Get the bay/spool index for this lane
-                            spool_idx = _lane_spool_index(lane)
-                            if spool_idx is not None:
-                                # Read hub sensor from hardware
-                                hub_values = getattr(oams_obj, 'hub_hes_value', None)
-                                if hub_values and spool_idx < len(hub_values):
-                                    hub_has_filament = bool(hub_values[spool_idx])
-                                    if hub_has_filament:
-                                        sensor_detected_lanes.append(lane_name)
+                            lane_index = getattr(lane, 'index', None)
+                            if lane_index is not None:
+                                try:
+                                    spool_idx = int(lane_index) - 1
+                                    if spool_idx >= 0:
+                                        # Read hub sensor from hardware
+                                        hub_values = getattr(oams_obj, 'hub_hes_value', None)
+                                        if hub_values and spool_idx < len(hub_values):
+                                            hub_has_filament = bool(hub_values[spool_idx])
+                                            if hub_has_filament:
+                                                sensor_detected_lanes.append(lane_name)
+                                except (TypeError, ValueError) as e:
+                                    self.logger.debug(f"Failed to parse slot number: {e}")
             except Exception as e:
                 self.logger.debug(f"Failed to process lane snapshot: {e}")
                 continue
@@ -2078,11 +2060,13 @@ class OAMSManager:
                             if not oams_obj:
                                 oams_obj = self.oams.get(oams_name)
                             if oams_obj:
-                                spool_idx = _lane_spool_index(old_lane_obj)
-                                if spool_idx is not None:
-                                    hub_values = getattr(oams_obj, 'hub_hes_value', None)
-                                    if hub_values and spool_idx < len(hub_values):
-                                        old_lane_hub_has_filament = bool(hub_values[spool_idx])
+                                lane_index = getattr(old_lane_obj, 'index', None)
+                                if lane_index is not None:
+                                    spool_idx = int(lane_index) - 1
+                                    if spool_idx >= 0:
+                                        hub_values = getattr(oams_obj, 'hub_hes_value', None)
+                                        if hub_values and spool_idx < len(hub_values):
+                                            old_lane_hub_has_filament = bool(hub_values[spool_idx])
                 except Exception as e:
                     self.logger.debug(f"Failed to read hub sensor for old lane {current_lane_loaded}: {e}")
 
