@@ -66,35 +66,17 @@ enable_clog_detection: True
 enable_stuck_spool_detection: True
 ```
 
-</details>
+---
 
-<details>
-<summary><strong>AFC Lane Mapping</strong></summary>
+## Installation
 
-```ini
-[AFC_lane lane0]
-unit: AMS_1:1
-hub: Hub_1
-map: T0
+## 1) Install/update AFC first
 
-[AFC_lane lane1]
-unit: AMS_1:2
-hub: Hub_2
-map: T1
-```
+This fork assumes Armored Turtle AFC is already installed and working.
 
-</details>
+## 2) Install OpenAMS extras from this repo
 
-<details>
-<summary><strong>OAMS Retry Settings</strong></summary>
-
-```ini
-[oams oams1]
-mcu: oams_mcu1
-load_retry_max: 3
-unload_retry_max: 2
-retry_delay: 3.0
-```
+From repo root:
 
 </details>
 
@@ -888,4 +870,4 @@ If you're still experiencing issues:
 
 This project was created by **knight.rad_iant** and **Armored Turtle Team** on Discord.
 
-Based on the original OpenAMS project with enhancements for AFC integration, retry logic, and clog detection.
+MIT (see `LICENSE`).
