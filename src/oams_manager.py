@@ -68,7 +68,7 @@ def _patch_moonraker_db_methods(moonraker) -> None:
     remove_database_entry (generic).  We add the matching generic write/read
     so OpenAMS can persist its own status without duplicating HTTP transport.
 
-    Safe to call multiple times — skips if the methods already exist
+    Safe to call multiple times -- skips if the methods already exist
     (e.g. if AFC adds them upstream later).
     """
     import types
