@@ -61,10 +61,41 @@ except Exception:
     OAMSStatus = None
     OAMSOpCode = None
 
-try:
-    from extras.openams_moonraker import ensure_generic_db_methods
-except Exception:
-    ensure_generic_db_methods = None
+def _patch_moonraker_db_methods(moonraker) -> None:
+    """Patch generic write/read_database_entry onto AFC_moonraker if missing.
+
+    AFC_moonraker already has update_afc_stats (hardcoded namespace) and
+    remove_database_entry (generic).  We add the matching generic write/read
+    so OpenAMS can persist its own status without duplicating HTTP transport.
+
+    Safe to call multiple times — skips if the methods already exist
+    (e.g. if AFC adds them upstream later).
+    """
+    import types
+    from urllib.request import Request
+
+    if not hasattr(moonraker, "write_database_entry"):
+        def _write(self, namespace, key, value):
+            payload = json.dumps({
+                "request_method": "POST",
+                "namespace": namespace,
+                "key": key,
+                "value": value,
+            }).encode()
+            req = Request(
+                self.database_url, payload,
+                headers={"Content-Type": "application/json"},
+            )
+            return self._get_results(req)
+
+        moonraker.write_database_entry = types.MethodType(_write, moonraker)
+
+    if not hasattr(moonraker, "read_database_entry"):
+        def _read(self, namespace, key):
+            url = self.database_url + f"?namespace={namespace}&key={key}"
+            return self._get_results(url, print_error=False)
+
+        moonraker.read_database_entry = types.MethodType(_read, moonraker)
 
 # Configuration constants
 PAUSE_DISTANCE = 60
@@ -1722,10 +1753,6 @@ class OAMSManager:
         self.ready = True
 
     def _start_moonraker_status_sync(self) -> None:
-        if ensure_generic_db_methods is None:
-            self.logger.warning("openams_moonraker module unavailable; status sync disabled")
-            return
-
         # Register timer unconditionally — the callback will lazy-init
         # when afc.moonraker becomes available (it's set during PREP,
         # after klippy:ready).
@@ -1744,7 +1771,7 @@ class OAMSManager:
         if moonraker is None:
             return False
 
-        ensure_generic_db_methods(moonraker)
+        _patch_moonraker_db_methods(moonraker)
         self._moonraker_patched = True
 
         # Recover last-known status from Moonraker DB (survives Klipper restart)
