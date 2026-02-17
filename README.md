@@ -1,6 +1,6 @@
-image
-OpenAMS for Klipper
-Version 0.0.3 — Lane-based AFC integration with event-driven monitoring
+<img width="1024" height="1024" alt="OpenAMS" src="https://github.com/user-attachments/assets/7b515408-d0b3-437f-b0a4-8c7128d2e922" />
+
+# OpenAMS for Klipper
 
 > **Version 0.0.3** — Lane-based AFC integration with event-driven monitoring
 
