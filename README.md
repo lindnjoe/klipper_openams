@@ -99,7 +99,7 @@ These configuration blocks are sourced from the repository templates—`AFC_Oams
 
 ### v0.0.3 — Current Release
 
-- **Moonraker state persistence** via `openams_moonraker.py` to keep manager status in the Moonraker database.
+- **Moonraker state persistence** is now handled directly inside the core OpenAMS modules (`src/oams_manager.py` with AFC integration helpers) so no separate `openams_moonraker.py` file is required.
 - **Shared integration services** in `openams_integration.py` (event bus, lane registry, hardware service) to reduce duplicated polling and improve responsiveness.
 - **Expanded `[oams_manager]` tuning** for stuck spool and clog detection thresholds/timing.
 - **Kalico compatibility path** in the FPS driver (`use_kalico: True`) for Danger Klipper setups.
