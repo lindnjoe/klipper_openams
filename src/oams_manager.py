@@ -2208,53 +2208,6 @@ class OAMSManager:
                 traceback=traceback.format_exc(),
             )
 
-    def _fix_afc_runout_helper_time(self, lane_name: str) -> None:
-        """Workaround for AFC bug: Update min_event_systime after load operations.
-
-        AFC's handle_load_runout() function has a docstring stating it should update
-        min_event_systime to prevent sensor event queue buildup, but the code is missing.
-        This causes Klipper crashes during manual load operations.
-
-        This is a defensive workaround until AFC fixes the bug in AFC_lane.py:676
-
-        Args:
-            lane_name: AFC lane name (e.g., "lane5")
-
-        """
-        try:
-            afc = self._get_afc()
-            if afc is None or not hasattr(afc, 'lanes'):
-                return
-
-            lane_obj = afc.lanes.get(lane_name)
-            if lane_obj is None:
-                return
-
-            # Check if lane has fila_load runout helper
-            if not hasattr(lane_obj, 'fila_load'):
-                return
-
-            fila_load = lane_obj.fila_load
-            if not hasattr(fila_load, 'runout_helper'):
-                return
-
-            runout_helper = fila_load.runout_helper
-            if not hasattr(runout_helper, 'min_event_systime') or not hasattr(runout_helper, 'event_delay'):
-                return
-
-            # Update min_event_systime to allow future switch changes to be detected
-            # This mimics how it's done in AFC_extruder.py handle_start_runout()
-            runout_helper.min_event_systime = self.reactor.monotonic() + runout_helper.event_delay
-
-            self.logger.debug(
-                f"Fixed min_event_systime for {lane_name} load sensor (workaround for AFC bug)"
-            )
-        except Exception as e:
-            # Don't crash if this workaround fails - just log it
-            self.logger.debug(
-                f"Failed to fix min_event_systime for {lane_name} (AFC may not have this lane or sensor)"
-            )
-
     def determine_current_loaded_lane(self, fps_name: str) -> Tuple[Optional[str], Optional[object], Optional[int]]:
         """Determine which lane is currently loaded in the specified FPS."""
         fps = self.fpss.get(fps_name)
@@ -5545,10 +5498,6 @@ class OAMSManager:
 
         # OPTIMIZATION: Enable follower immediately before cleanup operations
         self._ensure_forward_follower(fps_name, fps_state, "load filament")
-
-        # WORKAROUND: Fix AFC runout helper min_event_systime after load
-        # AFC's handle_load_runout() doesn't update this, causing Klipper crashes during manual loads
-        self._fix_afc_runout_helper_time(lane_name)
 
         # Clear LED error state if stuck spool was active
         if fps_state.stuck_spool.active:
