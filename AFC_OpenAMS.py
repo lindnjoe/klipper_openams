@@ -65,11 +65,9 @@ except Exception:
 
 _module_logger = logging.getLogger(__name__)
 
-_ORIGINAL_LANE_PRE_SENSOR = getattr(AFCLane, "get_toolhead_pre_sensor_state", None)
 _ORIGINAL_PERFORM_INFINITE_RUNOUT = getattr(AFCLane, "_perform_infinite_runout", None)
 _ORIGINAL_PREP_CAPTURE_TD1 = getattr(AFCLane, "_prep_capture_td1", None)
 _ORIGINAL_GET_TD1_DATA = getattr(AFCLane, "get_td1_data", None)
-_ORIGINAL_TD1_PREP = getattr(afcPrep, "_td1_prep", None)
 _ORIGINAL_LANE_UNLOAD = None  # Will be set during patching
 _ORIGINAL_BUFFER_SET_MULTIPLIER = None  # Will be set during patching
 _ORIGINAL_BUFFER_GET_STATUS = None  # Will be set during patching
@@ -371,7 +369,6 @@ class afcAMS(afcUnit):
         self._register_sync_dispatcher()
         self._patch_td1_capture()
         self._patch_td1_cali_fail_prompt()
-        self._patch_td1_prep()
 
         self.gcode.register_mux_command("AFC_OAMS_CALIBRATE_HUB_HES", "UNIT", self.name, self.cmd_AFC_OAMS_CALIBRATE_HUB_HES, desc="calibrate the OpenAMS HUB HES value for a specific lane")
         self.gcode.register_mux_command("AFC_OAMS_CALIBRATE_HUB_HES_ALL", "UNIT", self.name, self.cmd_AFC_OAMS_CALIBRATE_HUB_HES_ALL, desc="calibrate the OpenAMS HUB HES value for every loaded lane")
@@ -450,46 +447,6 @@ class afcAMS(afcUnit):
         AFCLane._prep_capture_td1 = _patched_prep_capture_td1
         AFCLane.get_td1_data = _patched_get_td1_data
         AFCLane._ams_td1_capture_patched = True
-
-    def _patch_td1_prep(self):
-        if getattr(afcPrep, "_openams_td1_prep_patched", False):
-            return
-
-        def _openams_td1_prep(prep_self, overrall_status):
-            capture_td1_data = prep_self.get_td1_data and prep_self.afc.td1_present
-            any_td1_error = False
-            if prep_self.afc.td1_present:
-                prep_self.logger.info("Found TD-1 device connected to printer")
-                any_td1_error, _ = prep_self.afc.function.check_for_td1_error()
-
-            current_lane = prep_self.afc.function.get_current_lane_obj()
-            if current_lane is not None:
-                current_lane.unit_obj.select_lane(current_lane)
-                if capture_td1_data:
-                    prep_self.logger.info("Cannot capture TD-1 data during PREP since toolhead is loaded")
-            elif capture_td1_data:
-                if not overrall_status:
-                    prep_self.logger.info("Cannot capture TD-1 data, not all of PREP succeeded")
-                else:
-                    if any_td1_error:
-                        prep_self.logger.error("Error with a TD-1 device, not collecting data during prep")
-                    else:
-                        prep_self.logger.info("Capturing TD-1 data for all loaded lanes")
-                        for lane in prep_self.afc.lanes.values():
-                            prep_ready = lane.prep_state
-                            if _is_openams_unit(lane.unit_obj):
-                                prep_ready = lane.load_state
-                            if lane.td1_device_id and lane.load_state and prep_ready:
-                                return_status, _ = lane.get_td1_data()
-                                if not return_status:
-                                    break
-                        prep_self.logger.info("Done capturing TD-1 data")
-
-        if _ORIGINAL_TD1_PREP is None:
-            return
-
-        afcPrep._td1_prep = _openams_td1_prep
-        afcPrep._openams_td1_prep_patched = True
 
     def _patch_td1_cali_fail_prompt(self):
         afc_function = getattr(self.afc, "function", None)
@@ -4532,58 +4489,6 @@ class afcAMS(afcUnit):
             eventtime = instance.reactor.monotonic()
             instance._sync_virtual_tool_sensor(eventtime, resolved_lane)
 
-def _patch_lane_pre_sensor_for_ams() -> None:
-    """Patch AFCLane.get_toolhead_pre_sensor_state for AMS virtual sensors."""
-    if _ORIGINAL_LANE_PRE_SENSOR is None:
-        return
-
-    if getattr(AFCLane, "_ams_pre_sensor_patched", False):
-        return
-
-    def _ams_get_toolhead_pre_sensor_state(self, *args, **kwargs):
-        unit = getattr(self, "unit_obj", None)
-        if not _is_openams_unit(unit):
-            return _ORIGINAL_LANE_PRE_SENSOR(self, *args, **kwargs)
-
-        reactor = getattr(unit, "reactor", None)
-        eventtime = None
-        if reactor is not None:
-            try:
-                eventtime = reactor.monotonic()
-            except Exception as e:
-                eventtime = None
-
-        if eventtime is None:
-            eventtime = 0.0
-
-        # Sync virtual tool sensor state (sensor state is kept up-to-date via events)
-        try:
-            unit._sync_virtual_tool_sensor(eventtime, self.name)
-        except Exception as e:
-            unit.logger.debug(f"Virtual tool sensor sync failed for {self.name}: {e}")
-
-        result = _ORIGINAL_LANE_PRE_SENSOR(self, *args, **kwargs)
-
-        if result:
-            return bool(result)
-
-        desired_state = unit._lane_reports_tool_filament(self)
-        if desired_state is None:
-            desired_state = False
-
-        if desired_state:
-            try:
-                unit._set_virtual_tool_sensor_state(desired_state, eventtime, getattr(self, "name", None), lane_obj=self)
-            except Exception as e:
-                unit.logger.debug(f"Failed to set virtual tool sensor state for {self.name}: {e}")
-            return True
-
-        return bool(result)
-
-    AFCLane.get_toolhead_pre_sensor_state = _ams_get_toolhead_pre_sensor_state
-    AFCLane._ams_pre_sensor_patched = True
-
-
 def _patch_infinite_runout_handler() -> None:
     """Harden AFCLane infinite runout handling without touching AFC_lane.py."""
 
@@ -4945,7 +4850,6 @@ def load_config_prefix(config):
 
     # Always apply patches during config load for any afc_openams sections
     # The patches will only take effect if OpenAMS hardware is actually present
-    _patch_lane_pre_sensor_for_ams()
     _patch_extruder_for_virtual_ams()
     _patch_infinite_runout_handler()
     _patch_lane_unload_for_ams()
