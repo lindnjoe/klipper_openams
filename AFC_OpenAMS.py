@@ -419,6 +419,174 @@ class afcAMS(afcUnit):
             return False, None, None
         return manager.clear_fps_state_for_lane(lane_name, eventtime=eventtime)
 
+    def load_sequence(self, cur_lane, cur_hub, cur_extruder):
+        """OpenAMS load sequence — delegates to OAMSManager instead of stepper-based loading.
+
+        Called by AFC's upstream delegation hook:
+            if hasattr(cur_lane.unit_obj, 'load_sequence'):
+                return cur_lane.unit_obj.load_sequence(...)
+
+        :param cur_lane: The lane object to be loaded.
+        :param cur_hub: The hub object associated with the lane (unused for OpenAMS).
+        :param cur_extruder: The extruder object associated with the lane.
+        :return bool: True if load was successful, False on error.
+        """
+        afc = self.afc
+
+        # Check if this lane is already loaded to toolhead — sync state and skip
+        if cur_lane.get_toolhead_pre_sensor_state() and hasattr(cur_lane, 'tool_loaded') and cur_lane.tool_loaded:
+            self.logger.debug(f"Lane {cur_lane.name} already loaded to toolhead, skipping load")
+            cur_lane.set_tool_loaded()
+            afc.save_vars()
+            return True
+
+        if afc._check_extruder_temp(cur_lane):
+            afc.afcDeltaTime.log_with_time("Done heating toolhead")
+
+        try:
+            if afc.afcDeltaTime.start_time is None:
+                afc.afcDeltaTime.set_start_time()
+            else:
+                now = datetime.now()
+                afc.afcDeltaTime.major_delta_time = now
+                afc.afcDeltaTime.last_time = now
+            afc._oams_suppress_tool_swap_timer = True
+            self.logger.debug(
+                f"OpenAMS load: delegating to OAMSM_LOAD_FILAMENT for lane {cur_lane.name}"
+            )
+            oams_manager = self._get_oams_manager()
+            if oams_manager is None:
+                afc.error.handle_lane_failure(cur_lane, "OpenAMS load failed: oams_manager not available")
+                return False
+
+            success, message = self._manager_load_for_lane(cur_lane.name)
+            if not success:
+                message = message or f"OpenAMS load failed for {cur_lane.name}"
+                afc.error.handle_lane_failure(cur_lane, message)
+                return False
+        except Exception as e:
+            message = "OpenAMS load failed for {}: {}".format(cur_lane.name, str(e))
+            afc.error.handle_lane_failure(cur_lane, message)
+            return False
+        finally:
+            afc._oams_suppress_tool_swap_timer = False
+
+        if not cur_lane.get_toolhead_pre_sensor_state():
+            message = (
+                "OpenAMS load did not trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n"
+                "||=====||====||==>--||\nTRG   LOAD   HUB   TOOL"
+            )
+            message += "\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.".format(cur_lane.name)
+            if afc.function.in_print():
+                message += "\nOnce filament is fully loaded click resume to continue printing"
+            afc.error.handle_lane_failure(cur_lane, message)
+            return False
+
+        cur_lane.set_tool_loaded()
+        afc.save_vars()
+        return True
+
+    def unload_sequence(self, cur_lane, cur_hub, cur_extruder):
+        """OpenAMS unload sequence — uses shared toolhead steps then delegates to OAMSManager.
+
+        The toolhead steps (cut, form tip, park) are shared with stock AFC since they
+        happen at the toolhead. After those, retraction is delegated to OAMSManager
+        instead of using stepper-based retraction.
+
+        Called by AFC's upstream delegation hook:
+            if hasattr(cur_lane.unit_obj, 'unload_sequence'):
+                return cur_lane.unit_obj.unload_sequence(...)
+
+        :param cur_lane: The lane object to be unloaded.
+        :param cur_hub: The hub object associated with the lane (unused for OpenAMS).
+        :param cur_extruder: The extruder object associated with the lane.
+        :return bool: True if unload was successful, False on error.
+        """
+        afc = self.afc
+
+        cur_lane.status = AFCLaneState.TOOL_UNLOADING
+
+        if afc._check_extruder_temp(cur_lane):
+            afc.afcDeltaTime.log_with_time("Done heating toolhead")
+
+        # Quick pull to prevent oozing
+        afc.move_e_pos(-2, cur_extruder.tool_unload_speed, "Quick Pull", wait_tool=False)
+        afc.function.log_toolhead_pos("TOOL_UNLOAD quick pull: ")
+        self.lane_unloading(cur_lane)
+        cur_lane.sync_to_extruder()
+        cur_lane.do_enable(True)
+        cur_lane.select_lane()
+
+        # Shared toolhead steps: cut, park, form tip
+        if afc.tool_cut:
+            cur_lane.extruder_obj.estats.increase_cut_total()
+            afc.gcode.run_script_from_command(afc.tool_cut_cmd)
+            afc.afcDeltaTime.log_with_time("TOOL_UNLOAD: After cut")
+            afc.function.log_toolhead_pos()
+
+            if afc.park:
+                afc.gcode.run_script_from_command(afc.park_cmd)
+                afc.afcDeltaTime.log_with_time("TOOL_UNLOAD: After park")
+                afc.function.log_toolhead_pos()
+
+        if afc.form_tip:
+            if afc.park:
+                afc.gcode.run_script_from_command(afc.park_cmd)
+                afc.afcDeltaTime.log_with_time("TOOL_UNLOAD: After form tip park")
+                afc.function.log_toolhead_pos()
+
+            if afc.form_tip_cmd == "AFC":
+                afc.tip = self.printer.lookup_object('AFC_form_tip')
+                afc.tip.tip_form()
+                afc.afcDeltaTime.log_with_time("TOOL_UNLOAD: After afc form tip")
+                afc.function.log_toolhead_pos()
+            else:
+                afc.gcode.run_script_from_command(afc.form_tip_cmd)
+                afc.afcDeltaTime.log_with_time("TOOL_UNLOAD: After custom form tip")
+                afc.function.log_toolhead_pos()
+
+        try:
+            # CRITICAL: Unsync from extruder before OpenAMS unload
+            # After cut/form_tip, lane is synced to extruder. Must unsync before
+            # OAMSM_UNLOAD_FILAMENT can control the spool independently.
+            cur_lane.unsync_to_extruder()
+
+            oams_manager = self._get_oams_manager()
+            if oams_manager is None:
+                afc.error.handle_lane_failure(cur_lane, "OpenAMS unload failed: oams_manager not available")
+                return False
+
+            fps_name = oams_manager.get_fps_for_afc_lane(cur_lane.name)
+            if not fps_name:
+                message = "OpenAMS unload failed for {}: unable to resolve FPS".format(cur_lane.name)
+                afc.error.handle_lane_failure(cur_lane, message)
+                return False
+
+            fps_id = fps_name.split(" ", 1)[1] if fps_name.startswith("fps ") else fps_name
+            self.logger.debug(
+                "OpenAMS unload: delegating to manager helper for lane {} (FPS {})".format(
+                    cur_lane.name, fps_id
+                )
+            )
+            success, message = self._manager_unload_with_prep_for_fps(fps_name)
+            if not success:
+                message = message or "OpenAMS unload failed for {}".format(cur_lane.name)
+                afc.error.handle_lane_failure(cur_lane, message)
+                return False
+
+            # After unload, filament is loaded in AMS (at f1s position), ready for next load
+            cur_lane.loaded_to_hub = True
+            cur_lane.set_tool_unloaded()
+            cur_lane.status = AFCLaneState.LOADED
+            self.lane_tool_unloaded(cur_lane)
+            afc.save_vars()
+        except Exception as e:
+            message = "OpenAMS unload failed for {}: {}".format(cur_lane.name, str(e))
+            afc.error.handle_lane_failure(cur_lane, message)
+            return False
+
+        return True
+
     def _patch_td1_capture(self):
         if getattr(AFCLane, "_ams_td1_capture_patched", False):
             return
@@ -2583,7 +2751,7 @@ class afcAMS(afcUnit):
         # Hook into AFC's LANE_UNLOAD for cross-extruder runouts
         self._wrap_afc_lane_unload()
         self._wrap_afc_unset_lane_loaded()
-        self._patch_afc_sequences()
+        self._patch_tool_swap_timing()
 
         # Sync AFC state with hardware sensors at startup
         # This should run after all initialization is complete and sensors are stable
@@ -2728,14 +2896,12 @@ class afcAMS(afcUnit):
         afc_function.unset_lane_loaded = unset_lane_loaded_wrapper
         self.logger.debug("Wrapped AFC.function.unset_lane_loaded for OpenAMS state sync")
 
-    def _patch_afc_sequences(self) -> None:
-        """Patch AFC load/unload sequences to delegate OpenAMS lanes."""
+    def _patch_tool_swap_timing(self) -> None:
+        """Patch AfcToolchanger.tool_swap to suppress timing during OpenAMS loads."""
         if not hasattr(self, "afc") or self.afc is None:
             return
 
         afc = self.afc
-        if getattr(afc, "_oams_sequences_patched", False):
-            return
 
         if not getattr(afc, "_oams_tool_swap_timing_patched", False):
             try:
@@ -2754,164 +2920,6 @@ class afcAMS(afcUnit):
 
                 AfcToolchanger.tool_swap = tool_swap_wrapper
                 afc._oams_tool_swap_timing_patched = True
-
-        if not hasattr(afc, "load_sequence") or not hasattr(afc, "unload_sequence"):
-            return
-
-        afc._oams_load_sequence_original = afc.load_sequence
-        afc._oams_unload_sequence_original = afc.unload_sequence
-        def load_sequence_wrapper(afc_self, cur_lane, cur_hub, cur_extruder):
-            unit_obj = getattr(cur_lane, "unit_obj", None)
-            is_openams = _is_openams_unit(unit_obj)
-            if not is_openams:
-                return afc_self._oams_load_sequence_original(cur_lane, cur_hub, cur_extruder)
-
-            # Check if this lane is already loaded to toolhead
-            # If so, skip load and just sync state
-            if cur_lane.get_toolhead_pre_sensor_state() and hasattr(cur_lane, 'tool_loaded') and cur_lane.tool_loaded:
-                afc_self.logger.debug(f"Lane {cur_lane.name} already loaded to toolhead, skipping load")
-                cur_lane.set_tool_loaded()
-                afc_self.save_vars()
-                return True
-
-            if afc_self._check_extruder_temp(cur_lane):
-                afc_self.afcDeltaTime.log_with_time("Done heating toolhead")
-
-            try:
-                if afc_self.afcDeltaTime.start_time is None:
-                    afc_self.afcDeltaTime.set_start_time()
-                else:
-                    now = datetime.now()
-                    afc_self.afcDeltaTime.major_delta_time = now
-                    afc_self.afcDeltaTime.last_time = now
-                afc_self._oams_suppress_tool_swap_timer = True
-                afc_self.logger.debug(
-                    f"OpenAMS load: delegating to OAMSM_LOAD_FILAMENT for lane {cur_lane.name}"
-                )
-                oams_manager = self._get_oams_manager()
-                if oams_manager is None:
-                    afc_self.error.handle_lane_failure(cur_lane, "OpenAMS load failed: oams_manager not available")
-                    return False
-
-                success, message = self._manager_load_for_lane(cur_lane.name)
-                if not success:
-                    message = message or f"OpenAMS load failed for {cur_lane.name}"
-                    afc_self.error.handle_lane_failure(cur_lane, message)
-                    return False
-            except Exception as e:
-                message = "OpenAMS load failed for {}: {}".format(cur_lane.name, str(e))
-                afc_self.error.handle_lane_failure(cur_lane, message)
-                return False
-            finally:
-                afc_self._oams_suppress_tool_swap_timer = False
-
-            if not cur_lane.get_toolhead_pre_sensor_state():
-                message = (
-                    "OpenAMS load did not trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n"
-                    "||=====||====||==>--||\nTRG   LOAD   HUB   TOOL"
-                )
-                message += "\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.".format(cur_lane.name)
-                if afc_self.function.in_print():
-                    message += "\nOnce filament is fully loaded click resume to continue printing"
-                afc_self.error.handle_lane_failure(cur_lane, message)
-                return False
-
-            cur_lane.set_tool_loaded()
-            afc_self.save_vars()
-            return True
-
-        def unload_sequence_wrapper(afc_self, cur_lane, cur_hub, cur_extruder):
-            unit_obj = getattr(cur_lane, "unit_obj", None)
-            is_openams = _is_openams_unit(unit_obj)
-            if not is_openams:
-                return afc_self._oams_unload_sequence_original(cur_lane, cur_hub, cur_extruder)
-
-            cur_lane.status = AFCLaneState.TOOL_UNLOADING
-
-            if afc_self._check_extruder_temp(cur_lane):
-                afc_self.afcDeltaTime.log_with_time("Done heating toolhead")
-
-            afc_self.move_e_pos(-2, cur_extruder.tool_unload_speed, "Quick Pull", wait_tool=False)
-            afc_self.function.log_toolhead_pos("TOOL_UNLOAD quick pull: ")
-            cur_lane.unit_obj.lane_unloading(cur_lane)
-            cur_lane.sync_to_extruder()
-            cur_lane.do_enable(True)
-            cur_lane.select_lane()
-
-            if afc_self.tool_cut:
-                # Stats moved from AFC_stats to AFC_extruder (AFCExtruderStats)
-                cur_lane.extruder_obj.estats.increase_cut_total()
-                afc_self.gcode.run_script_from_command(afc_self.tool_cut_cmd)
-                afc_self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After cut")
-                afc_self.function.log_toolhead_pos()
-
-                if afc_self.park:
-                    afc_self.gcode.run_script_from_command(afc_self.park_cmd)
-                    afc_self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After park")
-                    afc_self.function.log_toolhead_pos()
-
-            if afc_self.form_tip:
-                if afc_self.park:
-                    afc_self.gcode.run_script_from_command(afc_self.park_cmd)
-                    afc_self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After form tip park")
-                    afc_self.function.log_toolhead_pos()
-
-                if afc_self.form_tip_cmd == "AFC":
-                    afc_self.tip = afc_self.printer.lookup_object('AFC_form_tip')
-                    afc_self.tip.tip_form()
-                    afc_self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After afc form tip")
-                    afc_self.function.log_toolhead_pos()
-                else:
-                    afc_self.gcode.run_script_from_command(afc_self.form_tip_cmd)
-                    afc_self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After custom form tip")
-                    afc_self.function.log_toolhead_pos()
-
-            try:
-                # CRITICAL: Unsync from extruder before OpenAMS unload
-                # After cut/form_tip, lane is synced to extruder. Must unsync before
-                # OAMSM_UNLOAD_FILAMENT can control the spool independently.
-                cur_lane.unsync_to_extruder()
-
-                oams_manager = self._get_oams_manager()
-                if oams_manager is None:
-                    afc_self.error.handle_lane_failure(cur_lane, "OpenAMS unload failed: oams_manager not available")
-                    return False
-
-                fps_name = oams_manager.get_fps_for_afc_lane(cur_lane.name)
-                if not fps_name:
-                    message = "OpenAMS unload failed for {}: unable to resolve FPS".format(cur_lane.name)
-                    afc_self.error.handle_lane_failure(cur_lane, message)
-                    return False
-
-                fps_id = fps_name.split(" ", 1)[1] if fps_name.startswith("fps ") else fps_name
-                afc_self.logger.debug(
-                    "OpenAMS unload: delegating to manager helper for lane {} (FPS {})".format(
-                        cur_lane.name, fps_id
-                    )
-                )
-                success, message = self._manager_unload_with_prep_for_fps(fps_name)
-                if not success:
-                    message = message or "OpenAMS unload failed for {}".format(cur_lane.name)
-                    afc_self.error.handle_lane_failure(cur_lane, message)
-                    return False
-
-                # After unload, filament is loaded in AMS (at f1s position), ready for next load
-                cur_lane.loaded_to_hub = True
-                cur_lane.set_tool_unloaded()
-                cur_lane.status = AFCLaneState.LOADED
-                cur_lane.unit_obj.lane_tool_unloaded(cur_lane)
-                afc_self.save_vars()
-            except Exception as e:
-                message = "OpenAMS unload failed for {}: {}".format(cur_lane.name, str(e))
-                afc_self.error.handle_lane_failure(cur_lane, message)
-                return False
-
-            return True
-
-        afc.load_sequence = MethodType(load_sequence_wrapper, afc)
-        afc.unload_sequence = MethodType(unload_sequence_wrapper, afc)
-        setattr(afc, "_oams_sequences_patched", True)
-        self.logger.debug("AFC load/unload sequences patched for OpenAMS delegation")
 
     def _on_f1s_changed(self, event_type, unit_name, bay, value, eventtime, **kwargs):
         """Handle F1S sensor change events from AMSHardwareService.
