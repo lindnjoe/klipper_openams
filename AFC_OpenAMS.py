@@ -415,6 +415,56 @@ class afcAMS(afcUnit):
             return False, None, None
         return manager.clear_fps_state_for_lane(lane_name, eventtime=eventtime)
 
+    def _disable_stale_buffers_for_openams_load(self, cur_lane, cur_extruder):
+        """Disable stale AFC buffer tracking before OpenAMS-managed load.
+
+        During toolchanger dock/undock windows there may be no lane physically in the
+        shuttle while buffer timers still reference a previously active non-OpenAMS lane.
+        Disable those stale buffer sessions so OpenAMS loads do not inherit false
+        fault-monitoring context.
+        """
+        afc = self.afc
+
+        candidate_lane_names = []
+        extruder_lane_loaded = getattr(cur_extruder, "lane_loaded", None)
+        if extruder_lane_loaded and extruder_lane_loaded != cur_lane.name:
+            candidate_lane_names.append(extruder_lane_loaded)
+
+        afc_current = getattr(afc, "current", None)
+        if afc_current and afc_current != cur_lane.name:
+            candidate_lane_names.append(afc_current)
+
+        for lane_name in dict.fromkeys(candidate_lane_names):
+            lane_obj = afc.lanes.get(lane_name)
+            if lane_obj is None or getattr(lane_obj, "buffer_obj", None) is None:
+                continue
+            try:
+                lane_obj.disable_buffer()
+                self.logger.debug(
+                    f"OpenAMS load: disabled stale buffer session for lane {lane_name}"
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"OpenAMS load: failed to disable stale buffer for lane {lane_name}: {e}"
+                )
+
+        for buffer_obj in getattr(afc, "buffers", {}).values():
+            stale_lane = getattr(buffer_obj, "current_lane", None)
+            if stale_lane is None:
+                continue
+            stale_name = getattr(stale_lane, "name", None)
+            if stale_name == cur_lane.name:
+                continue
+            try:
+                buffer_obj.disable_buffer()
+                self.logger.debug(
+                    f"OpenAMS load: cleared lingering buffer.current_lane={stale_name} on {buffer_obj.name}"
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"OpenAMS load: failed to clear lingering buffer session on {buffer_obj.name}: {e}"
+                )
+
     def load_sequence(self, cur_lane, cur_hub, cur_extruder):
         """OpenAMS load sequence - delegates to OAMSManager instead of stepper-based loading.
 
@@ -429,7 +479,11 @@ class afcAMS(afcUnit):
         """
         afc = self.afc
 
-        # Check if this lane is already loaded to toolhead — sync state and skip
+        # Clear any stale AFC buffer tracking from the previously docked tool/lane
+        # before delegating motion to OpenAMS manager.
+        self._disable_stale_buffers_for_openams_load(cur_lane, cur_extruder)
+
+        # Check if this lane is already loaded to toolhead  sync state and skip
         if cur_lane.get_toolhead_pre_sensor_state() and hasattr(cur_lane, 'tool_loaded') and cur_lane.tool_loaded:
             self.logger.debug(f"Lane {cur_lane.name} already loaded to toolhead, skipping load")
             cur_lane.set_tool_loaded()
