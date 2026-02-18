@@ -68,7 +68,6 @@ _module_logger = logging.getLogger(__name__)
 _ORIGINAL_PERFORM_INFINITE_RUNOUT = getattr(AFCLane, "_perform_infinite_runout", None)
 _ORIGINAL_PREP_CAPTURE_TD1 = getattr(AFCLane, "_prep_capture_td1", None)
 _ORIGINAL_GET_TD1_DATA = getattr(AFCLane, "get_td1_data", None)
-_ORIGINAL_LANE_UNLOAD = None  # Will be set during patching
 
 
 def _is_openams_unit(unit_obj) -> bool:
@@ -583,6 +582,29 @@ class afcAMS(afcUnit):
             return False
 
         return True
+
+    def lane_unload(self, cur_lane):
+        """Block manual LANE_UNLOAD for OpenAMS lanes.
+
+        OpenAMS units have no AFC stepper path for lane ejection. Users should
+        remove spools physically or use TOOL_UNLOAD for toolhead-side unloads.
+        """
+        lane_name = getattr(cur_lane, "name", "unknown")
+        message = (
+            f"LANE_UNLOAD is not supported for OpenAMS lane {lane_name}. "
+            "OpenAMS units handle filament automatically - just remove the spool physically. "
+            "Use TOOL_UNLOAD if you need to unload from the toolhead."
+        )
+        self.logger.info(message)
+
+        try:
+            gcode = self.gcode or self.printer.lookup_object("gcode")
+            if gcode:
+                gcode.respond_info(message)
+        except Exception as e:
+            self.logger.debug(f"Failed to send LANE_UNLOAD info response for {lane_name}: {e}")
+
+        return None
 
     def _patch_td1_capture(self):
         if getattr(AFCLane, "_ams_td1_capture_patched", False):
@@ -4612,64 +4634,6 @@ def _patch_infinite_runout_handler() -> None:
     AFCLane._perform_infinite_runout = _ams_perform_infinite_runout
     AFCLane._ams_infinite_runout_patched = True
 
-def _patch_lane_unload_for_ams() -> None:
-    """Block LANE_UNLOAD for OpenAMS lanes to prevent Klipper hangs.
-
-    OpenAMS units manage filament automatically via hardware and don't support
-    manual lane ejection like Box Turtle units. Attempting manual ejection causes
-    the command to hang waiting for operations that won't complete properly.
-    """
-    global _ORIGINAL_LANE_UNLOAD
-
-    # Import here to avoid circular dependencies
-    try:
-        from extras.AFC import afc as AFC_Class
-    except Exception as e:
-        # If we can't import AFC, we can't patch it
-        return
-
-    if getattr(AFC_Class, "_ams_lane_unload_patched", False):
-        return
-
-    # Save original LANE_UNLOAD method
-    _ORIGINAL_LANE_UNLOAD = getattr(AFC_Class, "LANE_UNLOAD", None)
-    if not callable(_ORIGINAL_LANE_UNLOAD):
-        return
-
-    def _ams_lane_unload(self, cur_lane):
-        """Patched LANE_UNLOAD that blocks manual ejection on OpenAMS lanes."""
-        # Check if this is an OpenAMS lane
-        unit_obj = getattr(cur_lane, 'unit_obj', None)
-        if _is_openams_unit(unit_obj):
-            lane_name = getattr(cur_lane, 'name', 'unknown')
-            self.logger.info(
-                f"LANE_UNLOAD is not supported for OpenAMS lane {lane_name}. "
-                f"OpenAMS units handle filament automatically - just remove the spool physically. "
-                f"Use TOOL_UNLOAD if you need to unload from the toolhead."
-            )
-
-            # Try to respond to user via gcode
-            try:
-                gcode = self.gcode or self.printer.lookup_object("gcode")
-                if gcode:
-                    gcode.respond_info(
-                        f"LANE_UNLOAD is not supported for OpenAMS lanes like {lane_name}. "
-                        f"OpenAMS units handle filament automatically - just remove the spool physically. "
-                        f"Use TOOL_UNLOAD if you need to unload from the toolhead."
-                    )
-            except Exception as e:
-                self.logger.debug(f"Failed to send LANE_UNLOAD info response for {lane_name}: {e}")
-
-            return  # Block the operation
-
-        # Not an OpenAMS lane - call original LANE_UNLOAD
-        if callable(_ORIGINAL_LANE_UNLOAD):
-            return _ORIGINAL_LANE_UNLOAD(self, cur_lane)
-
-    AFC_Class.LANE_UNLOAD = _ams_lane_unload
-    AFC_Class._ams_lane_unload_patched = True
-
-
 def _has_openams_hardware(printer):
     """Check if any OpenAMS hardware is configured in the system.
 
@@ -4698,5 +4662,4 @@ def load_config_prefix(config):
     # The patches will only take effect if OpenAMS hardware is actually present
     _patch_extruder_for_virtual_ams()
     _patch_infinite_runout_handler()
-    _patch_lane_unload_for_ams()
     return afcAMS(config)
