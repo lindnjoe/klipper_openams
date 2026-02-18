@@ -420,7 +420,7 @@ class afcAMS(afcUnit):
         return manager.clear_fps_state_for_lane(lane_name, eventtime=eventtime)
 
     def load_sequence(self, cur_lane, cur_hub, cur_extruder):
-        """OpenAMS load sequence — delegates to OAMSManager instead of stepper-based loading.
+        """OpenAMS load sequence - delegates to OAMSManager instead of stepper-based loading.
 
         Called by AFC's upstream delegation hook:
             if hasattr(cur_lane.unit_obj, 'load_sequence'):
@@ -487,7 +487,7 @@ class afcAMS(afcUnit):
         return True
 
     def unload_sequence(self, cur_lane, cur_hub, cur_extruder):
-        """OpenAMS unload sequence — uses shared toolhead steps then delegates to OAMSManager.
+        """OpenAMS unload sequence - uses shared toolhead steps then delegates to OAMSManager.
 
         The toolhead steps (cut, form tip, park) are shared with stock AFC since they
         happen at the toolhead. After those, retraction is delegated to OAMSManager
