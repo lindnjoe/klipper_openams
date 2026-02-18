@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 import threading
 from dataclasses import dataclass
@@ -113,14 +112,16 @@ class AMSEventBus:
         self._subscribers: Dict[str, List[Tuple[Callable, int]]] = {}
         self._event_history: List[Tuple[str, float, Dict[str, Any]]] = []
         self._max_history = 100
-        self.logger = logging.getLogger("AMSEventBus")
-    
+        self.logger = None  # Set via get_instance(logger=...)
+
     @classmethod
-    def get_instance(cls) -> 'AMSEventBus':
+    def get_instance(cls, logger=None) -> 'AMSEventBus':
         """Get or create the singleton event bus."""
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls()
+            if logger is not None and cls._instance.logger is None:
+                cls._instance.logger = logger
             return cls._instance
     
     def subscribe(self, event_type: str, callback: Callable, *, priority: int = 0) -> None:
@@ -145,8 +146,8 @@ class AMSEventBus:
                 insert_idx = i + 1
             
             subscribers.insert(insert_idx, (callback, priority))
-            self.logger.debug("Subscribed to '%s' (priority=%d, total=%d)", 
-                            event_type, priority, len(subscribers))
+            if self.logger is not None:
+                self.logger.debug(f"Subscribed to '{event_type}' (priority={priority}, total={len(subscribers)})")
     
     def unsubscribe(self, event_type: str, callback: Callable) -> None:
         """Unregister a callback from a specific event type."""
@@ -191,8 +192,8 @@ class AMSEventBus:
                 callback(event_type=event_type, **kwargs)
                 success_count += 1
             except Exception as e:
-                self.logger.error("Event handler failed for '%s' (priority=%d): %s",
-                                    event_type, priority, e)
+                if self.logger is not None:
+                    self.logger.error(f"Event handler failed for '{event_type}' (priority={priority}): {e}")
         
         return success_count
     
@@ -262,28 +263,30 @@ class LaneRegistry:
     _instances: Dict[int, 'LaneRegistry'] = {}
     _lock = threading.RLock()
     
-    def __init__(self, printer):
+    def __init__(self, printer, logger=None):
         self.printer = printer
-        self.logger = logging.getLogger("LaneRegistry")
-        
+        self.logger = logger
+
         # Primary storage
         self._lanes: List[LaneInfo] = []
-        
+
         # Indexed lookups for O(1) access
         self._by_lane_name: Dict[str, LaneInfo] = {}
         self._by_spool: Dict[Tuple[str, int], LaneInfo] = {}
         self._by_extruder: Dict[str, List[LaneInfo]] = {}
-        
+
         # Subscribe to events
-        self.event_bus = AMSEventBus.get_instance()
-    
+        self.event_bus = AMSEventBus.get_instance(logger=self.logger)
+
     @classmethod
-    def for_printer(cls, printer) -> 'LaneRegistry':
+    def for_printer(cls, printer, logger=None) -> 'LaneRegistry':
         """Get or create the singleton registry for a printer."""
         with cls._lock:
             key = id(printer)
             if key not in cls._instances:
-                cls._instances[key] = cls(printer)
+                cls._instances[key] = cls(printer, logger=logger)
+            elif logger is not None:
+                cls._instances[key].logger = logger
             return cls._instances[key]
     
     def register_lane(self,
@@ -319,7 +322,7 @@ class LaneRegistry:
             # Check if already registered
             existing = self._by_lane_name.get(lane_name)
             if existing is not None:
-                self.logger.warning("Lane '%s' already registered, updating", lane_name)
+                self.logger.warning(f"Lane '{lane_name}' already registered, updating")
                 self._unregister_lane(existing)
 
             # Create lane info
@@ -346,8 +349,7 @@ class LaneRegistry:
                 self._by_extruder[extruder] = []
             self._by_extruder[extruder].append(info)
 
-            self.logger.info("Registered lane: %s ? %s[%d] (extruder=%s, fps=%s)",
-                           lane_name, unit_name, spool_index, extruder, fps_name)
+            self.logger.info(f"Registered lane: {lane_name} - {unit_name}[{spool_index}] (extruder={extruder}, fps={fps_name})")
             
             return info
     
@@ -431,10 +433,13 @@ class AMSHardwareService:
 
     _instances: Dict[Tuple[int, str], "AMSHardwareService"] = {}
 
-    def __init__(self, printer, name: str, logger: Optional[logging.Logger] = None):
+    def __init__(self, printer, name: str, logger=None):
         self.printer = printer
         self.name = name
-        self.logger = logger or logging.getLogger(f"AFC.AMS.{name}")
+        if logger is not None:
+            self.logger = logger
+        else:
+            self.logger = printer.lookup_object("AFC").logger
         self._controller = None
         self._lock = threading.RLock()
         self._status: Dict[str, Any] = {}
@@ -442,8 +447,8 @@ class AMSHardwareService:
         self._status_callbacks: List[Callable[[Dict[str, Any]], None]] = []
 
         # Use registry instead of local _lanes_by_spool
-        self.registry = LaneRegistry.for_printer(printer)
-        self.event_bus = AMSEventBus.get_instance()
+        self.registry = LaneRegistry.for_printer(printer, logger=self.logger)
+        self.event_bus = AMSEventBus.get_instance(logger=self.logger)
 
         # Cache reactor reference
         self._reactor = None
@@ -461,7 +466,7 @@ class AMSHardwareService:
         self._polling_enabled = False
 
     @classmethod
-    def for_printer(cls, printer, name: str = "default", logger: Optional[logging.Logger] = None) -> "AMSHardwareService":
+    def for_printer(cls, printer, name: str = "default", logger=None) -> "AMSHardwareService":
         """Return the singleton service for the provided printer/name pair."""
         key = (id(printer), name)
         try:
@@ -523,56 +528,6 @@ class AMSHardwareService:
         except Exception:
             return 0.0
 
-    def _log_info(self, message: str) -> None:
-        """Helper to log info messages compatible with both AFC_logger and standard logging."""
-        try:
-            # AFC_logger signature: info(message, console_only=False)
-            self.logger.info(message)
-        except TypeError:
-            # Log format string error to help debugging, then use fallback
-            try:
-                self.logger.debug(f"Log format error: {message!r} with args=()")
-            except Exception:
-                pass
-            # Standard logging signature: info(msg, *args)
-            self.logger.info(message)
-
-    def _log_warning(self, message: str) -> None:
-        """Helper to log warning messages compatible with both AFC_logger and standard logging."""
-        try:
-            self.logger.warning(message)
-        except TypeError:
-            # Log format string error to help debugging, then use fallback
-            try:
-                self.logger.debug(f"Log format error: {message!r} with args=()")
-            except Exception:
-                pass
-            self.logger.warning(message)
-
-    def _log_error(self, message: str) -> None:
-        """Helper to log error messages compatible with both AFC_logger and standard logging."""
-        try:
-            # AFC_logger has error() but not exception()
-            if hasattr(self.logger, 'error'):
-                self.logger.error(message)
-            else:
-                self.logger.error(message)
-        except TypeError:
-            # Log format string error to help debugging, then use fallback
-            try:
-                self.logger.debug(f"Log format error: {message!r} with args=()")
-            except Exception:
-                pass
-            # Fallback to print if all else fails
-            print(f"AMSHardwareService: {message}")
-
-    def _log_debug(self, message: str) -> None:
-        """Helper to log debug messages compatible with both AFC_logger and standard logging."""
-        try:
-            self.logger.debug(message)
-        except Exception:
-            pass  # Ignore debug logging failures
-
     def start_polling(self) -> None:
         """Start the unified hardware polling timer.
 
@@ -580,14 +535,14 @@ class AMSHardwareService:
         when sensor values change, allowing subscribers to react without polling.
         """
         if self._polling_timer is not None:
-            self._log_warning(f"Polling already started for {self.name}")
+            self.logger.warning(f"Polling already started for {self.name}")
             return
 
         if self._reactor is None:
             self._monotonic()  # Initialize reactor
 
         if self._reactor is None:
-            self._log_error("Cannot start polling: reactor not available")
+            self.logger.error("Cannot start polling: reactor not available")
             return
 
         self._polling_enabled = True
@@ -597,7 +552,7 @@ class AMSHardwareService:
             self._polling_callback,
             self._reactor.NOW + 1.0
         )
-        self._log_info(f"Started unified hardware polling for {self.name} (offset by 1s)")
+        self.logger.info(f"Started unified hardware polling for {self.name} (offset by 1s)")
 
     def stop_polling(self) -> None:
         """Stop the unified hardware polling timer."""
@@ -605,7 +560,7 @@ class AMSHardwareService:
         if self._polling_timer is not None and self._reactor is not None:
             self._reactor.unregister_timer(self._polling_timer)
             self._polling_timer = None
-            self._log_info(f"Stopped unified hardware polling for {self.name}")
+            self.logger.info(f"Stopped unified hardware polling for {self.name}")
 
     def _polling_callback(self, eventtime: float) -> float:
         """Unified polling callback that detects changes and publishes events.
@@ -650,9 +605,9 @@ class AMSHardwareService:
                         eventtime=eventtime
                     )
                     if old_val is None:
-                        self._log_info(f"f1s[{bay}] initial state: {new_val}")
+                        self.logger.info(f"f1s[{bay}] initial state: {new_val}")
                     else:
-                        self._log_debug(f"f1s[{bay}] changed: {old_val} -> {new_val}")
+                        self.logger.debug(f"f1s[{bay}] changed: {old_val} -> {new_val}")
 
                 self._last_f1s_hes[bay] = new_val
 
@@ -673,9 +628,9 @@ class AMSHardwareService:
                         eventtime=eventtime
                     )
                     if old_val is None:
-                        self._log_info(f"hub[{bay}] initial state: {new_val}")
+                        self.logger.info(f"hub[{bay}] initial state: {new_val}")
                     else:
-                        self._log_debug(f"hub[{bay}] changed: {old_val} -> {new_val}")
+                        self.logger.debug(f"hub[{bay}] changed: {old_val} -> {new_val}")
 
                 self._last_hub_hes[bay] = new_val
 
@@ -706,7 +661,7 @@ class AMSHardwareService:
 
         except Exception as e:
             import traceback
-            self._log_error(f"Error in unified polling callback for {self.name}: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"Error in unified polling callback for {self.name}: {e}\n{traceback.format_exc()}")
             return eventtime + self._polling_interval_idle
 
     def poll_status(self) -> Optional[Dict[str, Any]]:
@@ -746,7 +701,7 @@ class AMSHardwareService:
                     callback(status_copy)
                 except Exception as e:
                     import traceback
-                    self._log_error(f"AMS status observer failed for {self.name}: {e}\n{traceback.format_exc()}")
+                    self.logger.error(f"AMS status observer failed for {self.name}: {e}\n{traceback.format_exc()}")
 
     def latest_status(self) -> Dict[str, Any]:
         """Return the most recently cached status snapshot."""
@@ -1030,7 +985,7 @@ class AMSRunoutCoordinator:
             try:
                 unit.handle_runout_detected(spool_index, monitor, lane_name=lane_hint)
             except Exception as e:
-                unit.logger.error("Failed to propagate OpenAMS runout to AFC unit %s: %s", unit.name, e)
+                unit.logger.error(f"Failed to propagate OpenAMS runout to AFC unit {unit.name}: {e}")
 
     @classmethod
     def notify_afc_error(cls, printer, name: str, message: str, *, pause: bool = False) -> None:
@@ -1052,9 +1007,8 @@ class AMSRunoutCoordinator:
                 error_obj.AFC_error(message, pause=pause, level=3)
             except Exception as e:
                 logger = getattr(unit, "logger", None)
-                if logger is None:
-                    logger = logging.getLogger(__name__)
-                logger.error("Failed to deliver OpenAMS error '%s' to AFC unit %s: %s", message, unit, e)
+                if logger is not None:
+                    logger.error(f"Failed to deliver OpenAMS error '{message}' to AFC unit {unit}: {e}")
 
     @classmethod
     def notify_lane_tool_state(cls, printer, name: str, lane_name: str, *, loaded: bool, spool_index: Optional[int] = None, eventtime: Optional[float] = None) -> bool:
@@ -1078,7 +1032,7 @@ class AMSRunoutCoordinator:
                 if unit.handle_openams_lane_tool_state(lane_name, loaded, spool_index=spool_index, eventtime=eventtime):
                     handled = True
             except Exception as e:
-                unit.logger.error("Failed to update AFC lane %s from OpenAMS tool state: %s", lane_name, e)
+                unit.logger.error(f"Failed to update AFC lane {lane_name} from OpenAMS tool state: {e}")
         return handled
 
     @classmethod
@@ -1099,7 +1053,7 @@ class AMSRunoutCoordinator:
                 if callable(marker) and marker(lane_name):
                     handled = True
             except Exception as e:
-                unit.logger.error("Failed to mark lane %s as cross-extruder runout participant: %s", lane_name, e)
+                unit.logger.error(f"Failed to mark lane {lane_name} as cross-extruder runout participant: {e}")
         return handled
 
     @classmethod

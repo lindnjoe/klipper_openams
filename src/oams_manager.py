@@ -61,10 +61,41 @@ except Exception:
     OAMSStatus = None
     OAMSOpCode = None
 
-try:
-    from extras.openams_moonraker import OpenAMSMoonrakerClient
-except Exception:
-    OpenAMSMoonrakerClient = None
+def _patch_moonraker_db_methods(moonraker) -> None:
+    """Patch generic write/read_database_entry onto AFC_moonraker if missing.
+
+    AFC_moonraker already has update_afc_stats (hardcoded namespace) and
+    remove_database_entry (generic).  We add the matching generic write/read
+    so OpenAMS can persist its own status without duplicating HTTP transport.
+
+    Safe to call multiple times -- skips if the methods already exist
+    (e.g. if AFC adds them upstream later).
+    """
+    import types
+    from urllib.request import Request
+
+    if not hasattr(moonraker, "write_database_entry"):
+        def _write(self, namespace, key, value):
+            payload = json.dumps({
+                "request_method": "POST",
+                "namespace": namespace,
+                "key": key,
+                "value": value,
+            }).encode()
+            req = Request(
+                self.database_url, payload,
+                headers={"Content-Type": "application/json"},
+            )
+            return self._get_results(req)
+
+        moonraker.write_database_entry = types.MethodType(_write, moonraker)
+
+    if not hasattr(moonraker, "read_database_entry"):
+        def _read(self, namespace, key):
+            url = self.database_url + f"?namespace={namespace}&key={key}"
+            return self._get_results(url, print_error=False)
+
+        moonraker.read_database_entry = types.MethodType(_read, moonraker)
 
 # Configuration constants
 PAUSE_DISTANCE = 60
@@ -1155,10 +1186,13 @@ class OAMSManager:
         self.moonraker_status_interval = config.getfloat(
             "moonraker_status_interval", 5.0, minval=1.0, maxval=120.0
         )
-        self.moonraker_host = config.get("moonraker_host", "http://localhost")
-        self.moonraker_port = config.getint("moonraker_port", 7125, minval=1, maxval=65535)
-        self._moonraker_client = None
+        # Deprecated: host/port are now inherited from AFC's moonraker instance.
+        # Kept so existing configs don't error on unknown options.
+        config.get("moonraker_host", "http://localhost")
+        config.getint("moonraker_port", 7125, minval=1, maxval=65535)
+        self._moonraker_patched = False
         self._moonraker_status_timer = None
+        self._last_status_fingerprint: Optional[str] = None
 
         self._initialize_oams()
 
@@ -1651,7 +1685,7 @@ class OAMSManager:
             except Exception as exc:
                 self.logger.warning(f"Failed to unregister Moonraker status timer: {exc}")
             self._moonraker_status_timer = None
-        self._moonraker_client = None
+        self._moonraker_patched = False
 
         # Clean up MCU command poll timers
         for oams_name, timer in list(self._mcu_command_poll_timers.items()):
@@ -1719,62 +1753,68 @@ class OAMSManager:
         self.ready = True
 
     def _start_moonraker_status_sync(self) -> None:
-        if OpenAMSMoonrakerClient is None:
-            self.logger.warning("OpenAMS Moonraker client is unavailable; status sync disabled")
-            return
-
-        if self._moonraker_client is None:
-            self._moonraker_client = OpenAMSMoonrakerClient(
-                self.moonraker_host,
-                self.moonraker_port,
-                self.logger,
+        # Register timer unconditionally — the callback will lazy-init
+        # when afc.moonraker becomes available (it's set during PREP,
+        # after klippy:ready).
+        if self._moonraker_status_timer is None:
+            self._moonraker_status_timer = self.reactor.register_timer(
+                self._moonraker_status_sync_timer,
+                self.reactor.monotonic() + self.moonraker_status_interval,
             )
 
-        if not self._moonraker_client.is_available():
-            self.logger.warning("Moonraker status sync enabled, but Moonraker is not reachable")
-            return
+    def _ensure_moonraker_patched(self) -> bool:
+        """Lazy-init: patch afc.moonraker once it becomes available."""
+        if self._moonraker_patched:
+            return True
+
+        moonraker = getattr(self.afc, "moonraker", None)
+        if moonraker is None:
+            return False
+
+        _patch_moonraker_db_methods(moonraker)
+        self._moonraker_patched = True
 
         # Recover last-known status from Moonraker DB (survives Klipper restart)
         try:
-            persisted = self._moonraker_client.read_manager_status()
-            if persisted and isinstance(persisted.get("status"), dict):
-                age = ""
-                if "eventtime" in persisted:
-                    age = f", age={self.reactor.monotonic() - persisted['eventtime']:.0f}s"
-                self.logger.info(
-                    f"Recovered previous OpenAMS status from Moonraker DB"
-                    f" (keys={list(persisted['status'].keys())}{age})"
-                )
+            result = moonraker.read_database_entry("openams", "manager_status")
+            if isinstance(result, dict):
+                persisted = result.get("value")
+                if isinstance(persisted, dict) and isinstance(persisted.get("status"), dict):
+                    age = ""
+                    if "eventtime" in persisted:
+                        age = f", age={self.reactor.monotonic() - persisted['eventtime']:.0f}s"
+                    self.logger.info(
+                        f"Recovered previous OpenAMS status from Moonraker DB"
+                        f" (keys={list(persisted['status'].keys())}{age})"
+                    )
         except Exception as exc:
             self.logger.debug(f"OpenAMS Moonraker status recovery failed: {exc}")
 
-        if self._moonraker_status_timer is None:
-            now = self.reactor.monotonic()
-            try:
-                self._publish_moonraker_status_snapshot(now)
-            except Exception as exc:
-                self.logger.debug(f"OpenAMS Moonraker initial status publish error: {exc}")
-
-            next_time = now + self.moonraker_status_interval
-            self._moonraker_status_timer = self.reactor.register_timer(
-                self._moonraker_status_sync_timer,
-                next_time,
-            )
-            self.logger.info(
-                f"OpenAMS Moonraker status sync enabled (interval={self.moonraker_status_interval:.1f}s, mode=changes-only)"
-            )
+        self.logger.info(
+            f"OpenAMS Moonraker status sync enabled (interval={self.moonraker_status_interval:.1f}s, mode=changes-only)"
+        )
+        return True
 
     def _publish_moonraker_status_snapshot(self, eventtime: float) -> None:
-        if self._moonraker_client is None:
+        moonraker = getattr(self.afc, "moonraker", None)
+        if moonraker is None or not self._moonraker_patched:
             return
 
         snapshot = self.get_status(eventtime)
-        result = self._moonraker_client.publish_manager_status(
-            snapshot,
-            eventtime=eventtime,
-        )
-        if result == "failed":
+
+        # Fingerprint dedup: skip publish if nothing changed
+        fingerprint = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+        if fingerprint == self._last_status_fingerprint:
+            return
+
+        result = moonraker.write_database_entry("openams", "manager_status", {
+            "eventtime": eventtime,
+            "status": snapshot,
+        })
+        if result is None:
             self.logger.debug("OpenAMS Moonraker status publish failed")
+        else:
+            self._last_status_fingerprint = fingerprint
 
     def _publish_moonraker_now(self) -> None:
         """Push current status to Moonraker immediately (non-timer path).
@@ -1782,7 +1822,7 @@ class OAMSManager:
         Called after load/unload state changes so the frontend sees the
         update without waiting up to *moonraker_status_interval* seconds.
         """
-        if self._moonraker_client is None:
+        if not self._moonraker_patched:
             return
         try:
             self._publish_moonraker_status_snapshot(self.reactor.monotonic())
@@ -1790,8 +1830,9 @@ class OAMSManager:
             self.logger.debug(f"OpenAMS Moonraker immediate publish error: {exc}")
 
     def _moonraker_status_sync_timer(self, eventtime: float) -> float:
-        if self._moonraker_client is None:
-            return self.reactor.NEVER
+        if not self._ensure_moonraker_patched():
+            # afc.moonraker not ready yet — keep polling
+            return eventtime + self.moonraker_status_interval
 
         try:
             self._publish_moonraker_status_snapshot(eventtime)

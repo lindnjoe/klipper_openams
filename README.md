@@ -1,6 +1,8 @@
-<img width="1024" height="1024" alt="OpenAMS" src="https://github.com/user-attachments/assets/7b515408-d0b3-437f-b0a4-8c7128d2e922" />
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/7b515408-d0b3-437f-b0a4-8c7128d2e922" />
 
 
+
+# OpenAMS for Klipper
 
 
 A Klipper integration for OpenAMS that enables multi-material printing with automatic filament management, runout detection, and intelligent retry logic.
@@ -202,10 +204,10 @@ cd ~/AFC-Klipper-Add-On
 3. **Installation prompts:** During the AFC installation, you'll be presented with an interactive menu:
    - Press **T** to cycle through installation types until you see **OpenAMS**
    - Select the **OpenAMS** unit type when prompted
-   - Enter an AMS name or use the default (please make sure it starts with AMS) (default: `AMS_1`) 
+   - Enter an AMS name or use the default (please make sure it starts with AMS) (default: `AMS_1`)
    - Configure your preferred options (tip forming, cutters, etc.)
    - Complete the installation
-   
+
    <img width="1086" height="803" alt="AFC installation prompts" src="https://github.com/user-attachments/assets/7b62feea-d566-4be5-9d44-5b79644fc841" />
 
 4. **Best practice:** Install AFC while your OpenAMS unit is **empty** to avoid interruptions during the system file updates.
@@ -303,6 +305,20 @@ The `git checkout -B` command creates a local `lindnjoe-master` branch that trac
 #### Custom Installation Paths
 
 If your directory structure differs from the standard layout, configure the installation with additional parameters:
+
+```bash
+./install-openams.sh [-k <klipper path>] [-s <klipper service name>] [-c <configuration path>]
+```
+
+**Parameters:**
+- `-k` : Path to Klipper installation (default: `~/klipper`)
+- `-s` : Klipper service name (default: `klipper`)
+- `-c` : Configuration directory path (default: `~/printer_data/config`)
+
+**Example:**
+```bash
+./install-openams.sh -k /home/pi/klipper -c /home/pi/printer_data/config
+```
 
 ```bash
 ./install-openams.sh [-k <klipper path>] [-s <klipper service name>] [-c <configuration path>]
@@ -421,13 +437,13 @@ current_kd: 0.0
    ```bash
    ~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can0
    or
-   ls /dev/serial/by-id/*  
+   ls /dev/serial/by-id/*
    ```
 
 2. **Retry Settings**: The defaults work well for most setups, but you may need to adjust:
    - Increase `load_retry_max` if filament occasionally fails to load on first attempt
    - Increase `retry_delay` if your hardware needs more recovery time
-  
+
 
 ### FPS Configuration
 
@@ -458,6 +474,19 @@ The OpenAMS system includes automatic retry logic for both load and unload opera
 
 **Unload Retries:**
 - Default: 2 attempts 
+- Monitors encoder movement during unloading
+- Aborts stuck operations and retries automatically
+- Only pauses the printer if all retry attempts fail
+
+
+**Load Retries:**
+- Default: 3 attempts
+- Monitors encoder movement during loading
+- Automatically unloads and retries if filament gets stuck
+- Only pauses the printer if all retry attempts fail
+
+**Unload Retries:**
+- Default: 2 attempts
 - Monitors encoder movement during unloading
 - Aborts stuck operations and retries automatically
 - Only pauses the printer if all retry attempts fail
@@ -506,13 +535,12 @@ load_fps_stuck_threshold: 0.75
 
 # Pressure drop threshold to confirm engagement during post-load verification (default: 0.6)
 engagement_pressure_threshold: 0.6
-
 ```
 
 **Tuning guidance:**
 - Increase `stuck_spool_load_grace` if sensitive sensors flag issues during the first seconds of a load.
 - Raise `stuck_spool_max_attempts` if you want the manager to retry more before pausing.
-- Raise `stuck_spool_pressure_threshold` or `load_fps_stuck_threshold` if reliable hardware still reports premature “stuck” errors.
+- Raise `stuck_spool_pressure_threshold` or `load_fps_stuck_threshold` if reliable hardware still reports premature "stuck" errors.
 - Lower `clog_pressure_target` or shorten `post_load_pressure_dwell` if high-flow materials routinely trigger clog detection.
 
 ## Optional Features
@@ -562,12 +590,12 @@ Before calibrating, review the AFC `[AFC]` section and macro order of operation 
 #   - Print            |
 
 # TOOL Cutting Settings
-tool_cut: True                  
+tool_cut: True
 #    Boolean, when set to true a toolhead cutter will be utilized.
 tool_cut_cmd: AFC_CUT
-#    Default: AFC_CUT           
+#    Default: AFC_CUT
 #    Macro name to call when cutting filament. Using the default AFC_CUT macro
-#    will call the macro defined in `Cut.cfg`. You can replace this with a 
+#    will call the macro defined in `Cut.cfg`. You can replace this with a
 #    custom macro name if you have a different cutting method or tool.
 tool_cut_threshold: 10000
 #    A warning will print out 1,000 cuts before the threshold is hit. Once this
@@ -575,56 +603,57 @@ tool_cut_threshold: 10000
 #    threshold for the current blade has exceeded this threshold.
 
 # Park Settings
-park: True                      
+park: True
 #    Boolean, when set to true, the the park functionality will be enabled.
-park_cmd: AFC_PARK              
+park_cmd: AFC_PARK
 #    Default: AFC_PARK
 #    Macro name to call when parking the toolhead. Using the default AFC_PARK
 #    macro will call the macro defined in `Park.cfg`. You can replace this with
 #    a custom macro name if you have a different parking method or tool.
 
 # Poop Settings
-poop: True                      
-#    Boolean, when set to true, the system will use the `poop` method for 
+poop: True
+#    Boolean, when set to true, the system will use the `poop` method for
 #    purging filament after a color change.
-poop_cmd: AFC_POOP              
+poop_cmd: AFC_POOP
 #    Default: AFC_POOP
 #    Macro name to call when pooping filament. Using the default AFC_POOP macro
-#    will call the macro defined in `Poop.cfg`. You can replace this with a 
+#    will call the macro defined in `Poop.cfg`. You can replace this with a
 #    custom macro name if you have a different pooping method or tool.
 #    Please note that the only valid parameter for the AFC_POOP macro is
 #    `purge_length`, which defines the length of filament to purge.
 
 # Kick Settings
-kick: True                      
-#    Boolean, when set to true, the system will use enable the `kick` 
+kick: True
+#    Boolean, when set to true, the system will use enable the `kick`
 #    functionality to clear purged filament from the bed.
-kick_cmd: AFC_KICK              
+kick_cmd: AFC_KICK
 #    Default: AFC_Kick
 #    Macro name to call when wiping filament. Using the default AFC_KICK macro
-#    will call the macro defined in `Brush.cfg`. You can replace this with a 
+#    will call the macro defined in `Brush.cfg`. You can replace this with a
 #    custom macro name if you have a different wiping method or tool.
 
 # Wipe Settings
-wipe: True                      
-#    Boolean, when set to true, the system will use a wiper to help clean the 
+wipe: True
+#    Boolean, when set to true, the system will use a wiper to help clean the
 #    toolhead.
 wipe_cmd: AFC_BRUSH
 #    Default: AFC_BRUSH
 #    Macro name to call when wiping filament. Using the default AFC_BRUSH macro
-#    will call the macro defined in `Brush.cfg`. You can replace this with a 
+#    will call the macro defined in `Brush.cfg`. You can replace this with a
 #    custom macro name if you have a different wiping method or tool.
 
 # Form Tip Settings
-form_tip: False                 
-#    Boolean, when set to true, the system will use a form tip macro to help 
+form_tip: False
+#    Boolean, when set to true, the system will use a form tip macro to help
 #    shape the filament tip for better loading / unloading.
-form_tip_cmd: AFC               
+form_tip_cmd: AFC
 #    Default: AFC
 #    Macro name to call when using tip-forming. Using the default AFC macro will
-#    call the built-in macro. You can replace this with a custom macro name if 
-#    you have a different tip-forming method or tool. Configuration for the AFC 
-#    macro is defined in the `AFC.cfg` file.```
+#    call the built-in macro. You can replace this with a custom macro name if
+#    you have a different tip-forming method or tool. Configuration for the AFC
+#    macro is defined in the `AFC.cfg` file.
+```
 
 
 **Calibration Process:**
@@ -643,9 +672,9 @@ form_tip_cmd: AFC
    You can also run the commands directly:
    ```
    AFC_OAMS_CALIBRATE_PTFE UNIT=AMS_1 SPOOL=<spool_index>
-   
+
    AFC_OAMS_CALIBRATE_HUB_HES UNIT=AMS_1 SPOOL=<spool_index>
-   
+
    AFC_OAMS_CALIBRATE_HUB_HES_ALL UNIT=AMS_1
    ```
 
@@ -764,10 +793,6 @@ retry_delay: 3.0          # Delay between retry attempts
 4. **Check Klipper logs** for CAN timeout errors
 5. **Verify wiring:** Ensure CAN_H and CAN_L are not swapped
 
-### Clog Detection False Positives
-
-If the printer pauses due to false clog detection:
-
 1. **Lower sensitivity:**
    ```ini
    [oams_manager]
@@ -794,6 +819,41 @@ If the printer pauses due to false clog detection:
    ```
 
 2. **Check LED strip configuration** 
+3. **Test LEDs directly:**
+   ```
+   SET_LED LED=AFC_indicator INDEX=1 RED=1.0 GREEN=0 BLUE=0
+   ```
+
+### Filament Loading Failures
+
+If the printer pauses due to false clog detection:
+
+1. **Lower sensitivity:**
+   ```ini
+   [oams_manager]
+   clog_sensitivity: low
+   ```
+
+2. **Check for actual flow issues:**
+   - Partial nozzle clogs
+   - Extruder tension too tight/loose
+   - Filament diameter variations
+
+3. **Verify encoder function:**
+   - Clean encoder wheel
+   - Check encoder wiring
+
+### LED Issues
+
+**LEDs not changing color:**
+
+1. **Verify LED index configuration** in `AFC_AMS1.cfg`:
+   ```ini
+   [AFC_lane lane0]
+   led_index: AFC_indicator:1
+   ```
+
+2. **Check LED strip configuration**
 3. **Test LEDs directly:**
    ```
    SET_LED LED=AFC_indicator INDEX=1 RED=1.0 GREEN=0 BLUE=0
