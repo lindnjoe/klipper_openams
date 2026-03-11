@@ -336,14 +336,19 @@ If your directory structure differs from the standard layout, configure the inst
 
 ### 3. Apply AFC Integration Files
 
-OpenAMS relies on AFC integration helpers that are not bundled with the upstream AFC add-on yet. After completing the installations above, copy the updated integration files from this repository into your AFC add-on checkout:
+OpenAMS relies on AFC integration helpers that are not bundled with the upstream AFC add-on yet. After completing the installations above, run the post-install script from this repository to copy all required AFC extras and integration files into your AFC add-on checkout:
 
 ```bash
 cd ~/klipper_openams
-cp AFC_OpenAMS.py ~/AFC-Klipper-Add-On/extras/
-cp openams_integration.py ~/AFC-Klipper-Add-On/extras/
+./Post_Install.sh
 # Skip this overwrite if you already customized the staged file in Step 1
 cp AFC_AMS_1.cfg ~/printer_data/config/AFC/
+```
+
+If your AFC add-on repository is in a non-default location, pass it with `-t`:
+
+```bash
+./Post_Install.sh -t /path/to/AFC-Klipper-Add-On
 ```
 
 If you have edits in `~/printer_data/config/AFC/AFC_AMS_1.cfg`, either merge them back in after this copy or omit the line above.
