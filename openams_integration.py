@@ -1,36 +1,16 @@
-# Armored Turtle Automated Filament Changer  
+# Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-
-"""Shared OpenAMS integration helpers used by AFC and OpenAMS."""
-
 from __future__ import annotations
 
 import time
 import threading
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 OPENAMS_VERSION = "0.0.3"
 
-# ============================================================================
-# Shared Utility Functions
-# ============================================================================
-
-def normalize_extruder_name(name: Optional[str]) -> Optional[str]:
-    """Return a case-insensitive token for comparing extruder aliases.
-
-    Strips whitespace and converts to lowercase. Also removes 'ams_' prefix
-    if present (for AMS virtual extruder names).
-
-    Args:
-        name: Extruder name to normalize (e.g., "extruder", "Extruder4", "ams_extruder")
-
-    Returns:
-        Normalized name (e.g., "extruder", "extruder4") or None if invalid
-    """
+def normalize_extruder_name(name):
     if not name or not isinstance(name, str):
         return None
 
@@ -45,97 +25,45 @@ def normalize_extruder_name(name: Optional[str]) -> Optional[str]:
     return lowered or None
 
 
-class OpenAMSManagerFacade:
-    """Thin compatibility facade for oams_manager interactions."""
+def normalize_oams_name(name, *, default="default"):
+    if not name:
+        return default
 
-    @staticmethod
-    def get_manager(printer):
-        try:
-            return printer.lookup_object("oams_manager", None)
-        except Exception:
-            return None
+    normalized = str(name).strip()
+    if not normalized:
+        return default
 
-    @classmethod
-    def load_for_lane(cls, printer, lane_name: str) -> Tuple[bool, str]:
-        manager = cls.get_manager(printer)
-        if manager is None:
-            return False, "OpenAMS manager not available"
-        return manager.load_filament_for_lane(lane_name)
+    if normalized.lower().startswith("oams "):
+        normalized = normalized[5:].strip()
 
-    @classmethod
-    def unload_with_prep_for_fps(cls, printer, fps_name: str) -> Tuple[bool, str]:
-        manager = cls.get_manager(printer)
-        if manager is None:
-            return False, "OpenAMS manager not available"
-        return manager.unload_filament_with_prep_for_fps(fps_name)
+    return normalized or default
 
-    @classmethod
-    def clear_fps_state_for_lane(
-        cls,
-        printer,
-        lane_name: str,
-        *,
-        eventtime: Optional[float] = None,
-    ) -> Tuple[bool, Optional[str], Optional[int]]:
-        manager = cls.get_manager(printer)
-        if manager is None:
-            return False, None, None
-        return manager.clear_fps_state_for_lane(lane_name, eventtime=eventtime)
-
-
-# ============================================================================
-# Event System
-# ============================================================================
 
 class AMSEventBus:
-    """Lightweight event system for lane state changes.
-    
-    This eliminates polling overhead by publishing events when state changes occur.
-    Subscribers register callbacks for specific event types.
-    
-    Event Types:
-        - spool_loaded: When OAMS loads a spool
-        - spool_unloaded: When OAMS unloads a spool
-        - lane_tool_loaded: When filament reaches the toolhead
-        - lane_tool_unloaded: When filament leaves the toolhead
-        - lane_hub_loaded: When filament reaches the hub
-        - lane_hub_unloaded: When filament leaves the hub
-        - fps_state_changed: When FPS sensor state changes
-    """
-    
-    _instance: Optional['AMSEventBus'] = None
-    _lock = threading.RLock()
+    _instance = None
+    _lock        = threading.RLock()
     _MAX_HISTORY = 500
     _HISTORY_TTL = 3600.0
 
     def __init__(self):
-        self._subscribers: Dict[str, List[Tuple[Callable, int]]] = {}
-        self._event_history: List[Tuple[str, float, Dict[str, Any]]] = []
-        self._max_history = 100
-        self.logger = None  # Set via get_instance(logger=...)
+        self._subscribers   = {}
+        self._event_history = []
+        self.logger         = None  # Set via get_instance(logger=...)
 
     @classmethod
-    def get_instance(cls, logger=None) -> 'AMSEventBus':
-        """Get or create the singleton event bus."""
+    def get_instance(cls, logger=None):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls()
             if logger is not None and cls._instance.logger is None:
                 cls._instance.logger = logger
             return cls._instance
-    
-    def subscribe(self, event_type: str, callback: Callable, *, priority: int = 0) -> None:
-        """Register a callback for a specific event type.
-        
-        Args:
-            event_type: Type of event to subscribe to
-            callback: Function to call when event occurs (receives **kwargs)
-            priority: Higher priority callbacks are called first (default: 0)
-        """
+
+    def subscribe(self, event_type, callback, *, priority=0):
         with self._lock:
             if event_type not in self._subscribers:
                 self._subscribers[event_type] = []
-            
+
             # Insert based on priority (higher priority first)
             subscribers = self._subscribers[event_type]
             insert_idx = 0
@@ -144,30 +72,20 @@ class AMSEventBus:
                     insert_idx = i
                     break
                 insert_idx = i + 1
-            
+
             subscribers.insert(insert_idx, (callback, priority))
             if self.logger is not None:
                 self.logger.debug(f"Subscribed to '{event_type}' (priority={priority}, total={len(subscribers)})")
-    
-    def unsubscribe(self, event_type: str, callback: Callable) -> None:
-        """Unregister a callback from a specific event type."""
+
+    def unsubscribe(self, event_type, callback):
         with self._lock:
             if event_type in self._subscribers:
                 self._subscribers[event_type] = [
-                    (cb, pri) for cb, pri in self._subscribers[event_type] 
+                    (cb, pri) for cb, pri in self._subscribers[event_type]
                     if cb != callback
                 ]
-    
-    def publish(self, event_type: str, **kwargs) -> int:
-        """Publish an event to all subscribers.
 
-        Args:
-            event_type: Type of event being published
-            **kwargs: Event data to pass to subscribers
-
-        Returns:
-            Number of subscribers that successfully handled the event
-        """
+    def publish(self, event_type, **kwargs):
         eventtime = kwargs.get('eventtime', time.time())
 
         with self._lock:
@@ -182,10 +100,10 @@ class AMSEventBus:
                     self._event_history = self._event_history[-self._MAX_HISTORY:]
 
             subscribers = list(self._subscribers.get(event_type, []))
-        
+
         if not subscribers:
             return 0
-        
+
         success_count = 0
         for callback, priority in subscribers:
             try:
@@ -194,49 +112,37 @@ class AMSEventBus:
             except Exception as e:
                 if self.logger is not None:
                     self.logger.error(f"Event handler failed for '{event_type}' (priority={priority}): {e}")
-        
+
         return success_count
-    
-    def get_history(self, event_type: Optional[str] = None, 
-                   since: Optional[float] = None) -> List[Tuple[str, float, Dict[str, Any]]]:
-        """Get event history, optionally filtered by type and time."""
+
+    def get_history(self, event_type=None, since=None):
         with self._lock:
             history = list(self._event_history)
-        
+
         if event_type:
             history = [(et, time, data) for et, time, data in history if et == event_type]
-        
+
         if since is not None:
             history = [(et, time, data) for et, time, data in history if time >= since]
-        
+
         return history
 
 
-# ============================================================================
-# Lane Registry
-# ============================================================================
-
-@dataclass
 class LaneInfo:
-    """Complete identity information for a single lane.
+    def __init__(self, lane_name, unit_name, spool_index, extruder,
+                 fps_name=None, hub_name=None, led_index=None,
+                 custom_load_cmd=None, custom_unload_cmd=None):
+        self.lane_name        = lane_name    # "lane4", "lane5", etc.
+        self.unit_name        = unit_name    # "AMS_1", "AMS_2", etc.
+        self.spool_index      = spool_index  # 0-3 (zero-indexed position in OAMS unit)
+        self.extruder         = extruder     # "extruder4", "extruder5", etc.
+        self.fps_name         = fps_name
+        self.hub_name         = hub_name
+        self.led_index        = led_index
+        self.custom_load_cmd  = custom_load_cmd
+        self.custom_unload_cmd = custom_unload_cmd
 
-    This is the single source of truth for lane identity across OpenAMS and AFC.
-    All lookups (by name, spool index, lane alias, etc.) route through the registry.
-    """
-    lane_name: str          # "lane4", "lane5", etc.
-    unit_name: str          # "AMS_1", "AMS_2", etc.
-    spool_index: int        # 0-3 (zero-indexed position in OAMS unit)
-    extruder: str           # "extruder4", "extruder5", etc.
-    
-    # Optional fields
-    fps_name: Optional[str] = None          # "fps1", "fps2", etc.
-    hub_name: Optional[str] = None          # "Hub_1", "Hub_2", etc.
-    led_index: Optional[str] = None         # LED indicator reference
-    custom_load_cmd: Optional[str] = None   # Custom load macro
-    custom_unload_cmd: Optional[str] = None # Custom unload macro
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
+    def to_dict(self):
         return {
             'lane_name': self.lane_name,
             'unit_name': self.unit_name,
@@ -251,36 +157,23 @@ class LaneInfo:
 
 
 class LaneRegistry:
-    """Single source of truth for lane identity across OpenAMS and AFC.
-    
-    This registry eliminates multiple redundant lookups by providing O(1) access
-    to lane information via any identifier (lane name, spool index, etc.).
-    
-    All lane tracking should go through this registry instead of maintaining
-    separate mappings in multiple files.
-    """
-    
-    _instances: Dict[int, 'LaneRegistry'] = {}
-    _lock = threading.RLock()
-    
+    _instances = {}
+    _lock       = threading.RLock()
+
     def __init__(self, printer, logger=None):
         self.printer = printer
-        self.logger = logger
+        self.logger  = logger
 
-        # Primary storage
-        self._lanes: List[LaneInfo] = []
+        self._lanes              = []
+        self._by_lane_name       = {}
+        self._by_lane_name_lower = {}  # case-insensitive index
+        self._by_spool           = {}
+        self._by_extruder        = {}
 
-        # Indexed lookups for O(1) access
-        self._by_lane_name: Dict[str, LaneInfo] = {}
-        self._by_spool: Dict[Tuple[str, int], LaneInfo] = {}
-        self._by_extruder: Dict[str, List[LaneInfo]] = {}
-
-        # Subscribe to events
         self.event_bus = AMSEventBus.get_instance(logger=self.logger)
 
     @classmethod
-    def for_printer(cls, printer, logger=None) -> 'LaneRegistry':
-        """Get or create the singleton registry for a printer."""
+    def for_printer(cls, printer, logger=None):
         with cls._lock:
             key = id(printer)
             if key not in cls._instances:
@@ -288,36 +181,18 @@ class LaneRegistry:
             elif logger is not None:
                 cls._instances[key].logger = logger
             return cls._instances[key]
-    
+
     def register_lane(self,
-                     lane_name: str,
-                     unit_name: str,
-                     spool_index: int,
-                     extruder: str,
+                     lane_name,
+                     unit_name,
+                     spool_index,
+                     extruder,
                      *,
-                     fps_name: Optional[str] = None,
-                     hub_name: Optional[str] = None,
-                     led_index: Optional[str] = None,
-                     custom_load_cmd: Optional[str] = None,
-                     custom_unload_cmd: Optional[str] = None) -> LaneInfo:
-        """Register a lane with all its identifiers.
-
-        This is typically called during AFC_lane initialization.
-
-        Args:
-            lane_name: AFC lane identifier (e.g., "lane4")
-            unit_name: AMS unit name (e.g., "AMS_1")
-            spool_index: Zero-indexed spool position in OAMS unit (0-3)
-            extruder: Klipper extruder name (e.g., "extruder4")
-            fps_name: Optional FPS identifier (e.g., "fps1")
-            hub_name: Optional hub identifier (e.g., "Hub_1")
-            led_index: Optional LED indicator reference
-            custom_load_cmd: Optional custom load command
-            custom_unload_cmd: Optional custom unload command
-
-        Returns:
-            The registered LaneInfo object
-        """
+                     fps_name=None,
+                     hub_name=None,
+                     led_index=None,
+                     custom_load_cmd=None,
+                     custom_unload_cmd=None):
         with self._lock:
             # Check if already registered
             existing = self._by_lane_name.get(lane_name)
@@ -337,12 +212,13 @@ class LaneRegistry:
                 custom_load_cmd=custom_load_cmd,
                 custom_unload_cmd=custom_unload_cmd,
             )
-            
+
             # Add to storage
             self._lanes.append(info)
 
             # Build indexes
             self._by_lane_name[lane_name] = info
+            self._by_lane_name_lower[lane_name.lower()] = info
             self._by_spool[(unit_name, spool_index)] = info
 
             if extruder not in self._by_extruder:
@@ -350,15 +226,15 @@ class LaneRegistry:
             self._by_extruder[extruder].append(info)
 
             self.logger.info(f"Registered lane: {lane_name} - {unit_name}[{spool_index}] (extruder={extruder}, fps={fps_name})")
-            
+
             return info
-    
-    def _unregister_lane(self, info: LaneInfo) -> None:
-        """Internal: Remove a lane from all indexes."""
+
+    def _unregister_lane(self, info):
         if info in self._lanes:
             self._lanes.remove(info)
-        
+
         self._by_lane_name.pop(info.lane_name, None)
+        self._by_lane_name_lower.pop(info.lane_name.lower(), None)
         self._by_spool.pop((info.unit_name, info.spool_index), None)
 
         extruder_lanes = self._by_extruder.get(info.extruder, [])
@@ -367,84 +243,57 @@ class LaneRegistry:
             # Remove empty list to prevent memory leak
             if not extruder_lanes:
                 self._by_extruder.pop(info.extruder, None)
-    
-    def get_by_lane(self, lane_name: str) -> Optional[LaneInfo]:
-        """Get lane info by AFC lane name (e.g., "lane4")."""
+
+    def get_by_lane(self, lane_name):
         with self._lock:
             return self._by_lane_name.get(lane_name)
-    
-    def get_by_spool(self, unit_name: str, spool_index: int) -> Optional[LaneInfo]:
+
+    def get_by_spool(self, unit_name: str, spool_index: int):
         """Get lane info by OAMS unit and spool index (e.g., "AMS_1", 0)."""
         with self._lock:
             return self._by_spool.get((unit_name, spool_index))
 
-    def resolve_lane_token(self, token: str) -> Optional[LaneInfo]:
-        """Resolve a lane by name."""
-        lowered = token.lower()
+    def resolve_lane_token(self, token: str):
+        """Resolve a lane by name (case-insensitive, O(1) lookup)."""
         with self._lock:
-            for lane_name, info in self._by_lane_name.items():
-                if lane_name.lower() == lowered:
-                    return info
+            return self._by_lane_name_lower.get(token.lower())
 
-            return None
-    
-    def get_by_extruder(self, extruder: str) -> List[LaneInfo]:
-        """Get all lanes for an extruder (e.g., "extruder4")."""
+    def get_by_extruder(self, extruder):
         with self._lock:
             return list(self._by_extruder.get(extruder, []))
-    
-    def get_all_lanes(self) -> List[LaneInfo]:
-        """Get all registered lanes."""
+
+    def get_all_lanes(self):
         with self._lock:
             return list(self._lanes)
-    
-    def resolve_lane_name(self, unit_name: str, spool_index: int) -> Optional[str]:
-        """Helper: Get lane name from unit and spool index."""
+
+    def resolve_lane_name(self, unit_name, spool_index):
         info = self.get_by_spool(unit_name, spool_index)
         return info.lane_name if info else None
-    
-    def resolve_spool_index(self, lane_name: str) -> Optional[int]:
-        """Helper: Get spool index from lane name."""
+
+    def resolve_spool_index(self, lane_name):
         info = self.get_by_lane(lane_name)
         return info.spool_index if info else None
-    
-    def resolve_extruder(self, lane_name: str) -> Optional[str]:
-        """Helper: Get extruder from lane name."""
+
+    def resolve_extruder(self, lane_name):
         info = self.get_by_lane(lane_name)
         return info.extruder if info else None
 
 
-# ============================================================================
-
-# ============================================================================
-# AMSHardwareService (Enhanced with Registry)
-# ============================================================================
-
 class AMSHardwareService:
-    """Centralised interface for accessing OpenAMS hardware from AFC.
+    _instances = {}
 
-    The service tracks the underlying ``OAMS`` firmware object created by
-    ``klipper_openams`` and exposes high level helpers so AFC can interact with
-    the same hardware instance without reimplementing any low level MCU
-    messaging.
-    
-    Uses LaneRegistry for all lane lookups.
-    """
-
-    _instances: Dict[Tuple[int, str], "AMSHardwareService"] = {}
-
-    def __init__(self, printer, name: str, logger=None):
+    def __init__(self, printer, name, logger=None):
         self.printer = printer
         self.name = name
         if logger is not None:
             self.logger = logger
         else:
             self.logger = printer.lookup_object("AFC").logger
-        self._controller = None
-        self._lock = threading.RLock()
-        self._status: Dict[str, Any] = {}
-        self._lane_snapshots: Dict[str, Dict[str, Any]] = {}
-        self._status_callbacks: List[Callable[[Dict[str, Any]], None]] = []
+        self._controller       = None
+        self._lock             = threading.RLock()
+        self._status           = {}
+        self._lane_snapshots   = {}
+        self._status_callbacks = []
 
         # Use registry instead of local _lanes_by_spool
         self.registry = LaneRegistry.for_printer(printer, logger=self.logger)
@@ -466,21 +315,19 @@ class AMSHardwareService:
         self._polling_enabled = False
 
     @classmethod
-    def for_printer(cls, printer, name: str = "default", logger=None) -> "AMSHardwareService":
-        """Return the singleton service for the provided printer/name pair."""
-        key = (id(printer), name)
+    def for_printer(cls, printer, name="default", logger=None):
+        key = (id(printer), AMSRunoutCoordinator._canonical_oams_name(name))
         try:
             service = cls._instances[key]
         except KeyError:
-            service = cls(printer, name, logger)
+            service = cls(printer, AMSRunoutCoordinator._canonical_oams_name(name), logger)
             cls._instances[key] = service
         else:
             if logger is not None:
                 service.logger = logger
         return service
 
-    def attach_controller(self, controller: Any) -> None:
-        """Attach the low level ``OAMS`` controller to this service."""
+    def attach_controller(self, controller):
         with self._lock:
             self._controller = controller
         if controller is not None:
@@ -492,7 +339,7 @@ class AMSHardwareService:
                 self._update_status(status)
             self.logger.debug(f"Attached OAMS controller {controller}")
 
-    def resolve_controller(self) -> Optional[Any]:
+    def resolve_controller(self):
         """Return the currently attached controller, attempting lookup if needed."""
         with self._lock:
             controller = self._controller
@@ -508,7 +355,7 @@ class AMSHardwareService:
             self.attach_controller(controller)
         return controller
 
-    def _monotonic(self) -> float:
+    def _monotonic(self):
         """Cache reactor reference for faster lookups."""
         if self._reactor is None:
             reactor = getattr(self.printer, "get_reactor", None)
@@ -528,7 +375,7 @@ class AMSHardwareService:
         except Exception:
             return 0.0
 
-    def start_polling(self) -> None:
+    def start_polling(self):
         """Start the unified hardware polling timer.
 
         Centralizes all hardware polling in one place and publishes events
@@ -554,7 +401,7 @@ class AMSHardwareService:
         )
         self.logger.info(f"Started unified hardware polling for {self.name} (offset by 1s)")
 
-    def stop_polling(self) -> None:
+    def stop_polling(self):
         """Stop the unified hardware polling timer."""
         self._polling_enabled = False
         if self._polling_timer is not None and self._reactor is not None:
@@ -562,7 +409,7 @@ class AMSHardwareService:
             self._polling_timer = None
             self.logger.info(f"Stopped unified hardware polling for {self.name}")
 
-    def _polling_callback(self, eventtime: float) -> float:
+    def _polling_callback(self, eventtime: float):
         """Unified polling callback that detects changes and publishes events.
 
         Polls OAMS hardware sensors and publishes events to subscribers when
@@ -664,7 +511,7 @@ class AMSHardwareService:
             self.logger.error(f"Error in unified polling callback for {self.name}: {e}\n{traceback.format_exc()}")
             return eventtime + self._polling_interval_idle
 
-    def poll_status(self) -> Optional[Dict[str, Any]]:
+    def poll_status(self):
         """Query the controller for its latest status snapshot."""
         controller = self.resolve_controller()
         if controller is None:
@@ -687,12 +534,12 @@ class AMSHardwareService:
         self._update_status(status)
         return status
 
-    def _update_status(self, status: Dict[str, Any]) -> None:
+    def _update_status(self, status: Dict[str, Any]):
         """Update cached status and notify observers."""
         with self._lock:
             self._status = dict(status)
             callbacks = list(self._status_callbacks)
-        
+
         # Only call callbacks if there are any registered
         if callbacks:
             status_copy = dict(status)
@@ -703,18 +550,18 @@ class AMSHardwareService:
                     import traceback
                     self.logger.error(f"AMS status observer failed for {self.name}: {e}\n{traceback.format_exc()}")
 
-    def latest_status(self) -> Dict[str, Any]:
+    def latest_status(self):
         """Return the most recently cached status snapshot."""
         with self._lock:
             return dict(self._status)
 
-    def register_status_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+    def register_status_callback(self, callback: Callable[[Dict[str, Any]], None]):
         """Register a callback to be notified of status updates."""
         with self._lock:
             if callback not in self._status_callbacks:
                 self._status_callbacks.append(callback)
 
-    def unregister_status_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+    def unregister_status_callback(self, callback: Callable[[Dict[str, Any]], None]):
         """Unregister a previously registered status callback."""
         with self._lock:
             if callback in self._status_callbacks:
@@ -731,7 +578,7 @@ class AMSHardwareService:
         enabling event-driven updates instead of polling.
         """
         key = f"{unit_name}:{lane_name}"
-        
+
         normalized_index: Optional[int]
         if spool_index is not None:
             try:
@@ -760,7 +607,7 @@ class AMSHardwareService:
                 self._lane_snapshots[key]["spool_index"] = old_snapshot["spool_index"]
             if tool_state is not None:
                 self._lane_snapshots[key]["tool_state"] = bool(tool_state)
-            
+
         # Determine the best spool index to report with events
         event_spool_index = normalized_index
         if event_spool_index is None:
@@ -770,7 +617,10 @@ class AMSHardwareService:
         old_lane_state = old_snapshot.get("lane_state")
         new_lane_state = bool(lane_state)
 
-        if emit_spool_event and (old_lane_state is None or old_lane_state != new_lane_state) and event_spool_index is not None:
+        # Skip spool events for initial snapshots (old_lane_state is None).
+        # Initial state publication during startup should not be treated as
+        # a load/unload transition because AFC/Moonraker may not be ready yet.
+        if emit_spool_event and old_lane_state is not None and old_lane_state != new_lane_state and event_spool_index is not None:
             event_type = "spool_loaded" if new_lane_state else "spool_unloaded"
             self.event_bus.publish(
                 event_type,
@@ -793,7 +643,7 @@ class AMSHardwareService:
                     spool_index=spool_index,
                     eventtime=eventtime
                 )
-        
+
         if tool_state is not None:
             old_tool_state = old_snapshot.get("tool_state")
             if old_tool_state is not None and old_tool_state != tool_state:
@@ -806,16 +656,16 @@ class AMSHardwareService:
                     eventtime=eventtime
                 )
 
-    def latest_lane_snapshot(self, unit_name: str, lane_name: str) -> Optional[Dict[str, Any]]:
+    def latest_lane_snapshot(self, unit_name: str, lane_name: str):
         """Return the most recent state snapshot for a specific lane."""
         key = f"{unit_name}:{lane_name}"
         with self._lock:
             snapshot = self._lane_snapshots.get(key)
         return dict(snapshot) if snapshot else None
 
-    def resolve_lane_for_spool(self, unit_name: str, spool_index: Optional[int]) -> Optional[str]:
+    def resolve_lane_for_spool(self, unit_name: str, spool_index: Optional[int]):
         """Map a spool index to its corresponding lane name.
-        
+
         Uses LaneRegistry instead of local mapping.
         """
         if spool_index is None:
@@ -824,18 +674,18 @@ class AMSHardwareService:
             normalized = int(spool_index)
         except (TypeError, ValueError):
             return None
-        
+
         # Use registry
         return self.registry.resolve_lane_name(unit_name, normalized)
 
-    def resolve_lane_for_spool_with_afc(self, unit_name: str, spool_index: Optional[int]) -> Optional[str]:
+    def resolve_lane_for_spool_with_afc(self, unit_name: str, spool_index: Optional[int]):
         """Resolve lane name via registry with AFC fallback if needed."""
         lane_name = self.resolve_lane_for_spool(unit_name, spool_index)
         if lane_name is not None:
             return lane_name
         return self._resolve_lane_name_from_afc(unit_name, spool_index)
 
-    def _resolve_lane_name_from_afc(self, unit_name: str, spool_index: Optional[int]) -> Optional[str]:
+    def _resolve_lane_name_from_afc(self, unit_name: str, spool_index: Optional[int]):
         """Fallback: resolve lane name by looking up AFC units directly."""
         if spool_index is None:
             return None
@@ -869,7 +719,7 @@ class AMSHardwareService:
                         return lane_name
         return None
 
-    def latest_lane_snapshot_for_spool(self, unit_name: str, spool_index: Optional[int]) -> Optional[Dict[str, Any]]:
+    def latest_lane_snapshot_for_spool(self, unit_name: str, spool_index: Optional[int]):
         """Return the most recent state snapshot for a spool by its index."""
         lane_name = self.resolve_lane_for_spool(unit_name, spool_index)
         if lane_name is None:
@@ -883,7 +733,7 @@ class AMSHardwareService:
             raise RuntimeError(f"OpenAMS controller '{self.name}' is not ready")
         return controller
 
-    def load_spool(self, spool_index: int) -> None:
+    def load_spool(self, spool_index: int):
         """Command the OAMS to load a specific spool.
 
         Sends load command to hardware and publishes spool_loaded event
@@ -891,7 +741,7 @@ class AMSHardwareService:
         """
         controller = self._require_controller()
         controller.oams_load_spool_cmd.send([spool_index])
-        
+
         # Publish event
         eventtime = self._monotonic()
         self.event_bus.publish(
@@ -901,7 +751,7 @@ class AMSHardwareService:
             eventtime=eventtime
         )
 
-    def unload_spool(self) -> None:
+    def unload_spool(self):
         """Command the OAMS to unload the current spool.
 
         Sends unload command to hardware and publishes spool_unloaded event
@@ -910,7 +760,7 @@ class AMSHardwareService:
         controller = self._require_controller()
         current_spool = getattr(controller, "current_spool", None)
         controller.oams_unload_spool_cmd.send([])
-        
+
         # Publish event
         eventtime = self._monotonic()
         self.event_bus.publish(
@@ -920,12 +770,12 @@ class AMSHardwareService:
             eventtime=eventtime
         )
 
-    def set_follower(self, enable: bool, direction: int) -> None:
+    def set_follower(self, enable: bool, direction: int):
         """Enable or disable the OAMS follower motor."""
         controller = self._require_controller()
         controller.oams_follower_cmd.send([1 if enable else 0, direction])
 
-    def set_led_error(self, idx: int, value: int) -> None:
+    def set_led_error(self, idx: int, value: int):
         """Set the error LED state for a specific spool bay."""
         controller = self._require_controller()
         controller.set_led_error(idx, value)
@@ -938,13 +788,18 @@ class AMSRunoutCoordinator:
     _monitors: Dict[Tuple[int, str], List[Any]] = {}
     _lock = threading.RLock()
 
-    @classmethod
-    def _key(cls, printer, name: str) -> Tuple[int, str]:
-        """Generate a unique key for printer/name combinations."""
-        return (id(printer), name)
+    @staticmethod
+    def _canonical_oams_name(name: Optional[str]):
+        """Normalize OAMS identifiers to one canonical key format."""
+        return normalize_oams_name(name)
 
     @classmethod
-    def register_afc_unit(cls, unit) -> AMSHardwareService:
+    def _key(cls, printer, name: Optional[str]):
+        """Generate a unique key for printer/name combinations."""
+        return (id(printer), cls._canonical_oams_name(name))
+
+    @classmethod
+    def register_afc_unit(cls, unit):
         """Register an ``afcAMS`` unit as participating in AMS integration."""
         service = AMSHardwareService.for_printer(unit.printer, unit.oams_name, unit.logger)
         key = cls._key(unit.printer, unit.oams_name)
@@ -955,7 +810,7 @@ class AMSRunoutCoordinator:
         return service
 
     @classmethod
-    def register_runout_monitor(cls, monitor) -> AMSHardwareService:
+    def register_runout_monitor(cls, monitor):
         """Register an OpenAMS runout monitor and return the hardware service."""
         printer = getattr(monitor, "printer", None)
         state = getattr(monitor, "fps_state", None)
@@ -970,7 +825,7 @@ class AMSRunoutCoordinator:
         return AMSHardwareService.for_printer(printer, oams_name)
 
     @classmethod
-    def notify_runout_detected(cls, monitor, spool_index: Optional[int], *, lane_name: Optional[str] = None) -> None:
+    def notify_runout_detected(cls, monitor, spool_index: Optional[int], *, lane_name: Optional[str] = None):
         """Forward runout detection from OpenAMS to any registered AFC units."""
         printer = getattr(monitor, "printer", None)
         state = getattr(monitor, "fps_state", None)
@@ -988,7 +843,7 @@ class AMSRunoutCoordinator:
                 unit.logger.error(f"Failed to propagate OpenAMS runout to AFC unit {unit.name}: {e}")
 
     @classmethod
-    def notify_afc_error(cls, printer, name: str, message: str, *, pause: bool = False) -> None:
+    def notify_afc_error(cls, printer, name: str, message: str, *, pause: bool = False):
         """Deliver an OpenAMS pause/error message to any registered AFC units."""
         key = cls._key(printer, name)
         with cls._lock:
@@ -1011,7 +866,7 @@ class AMSRunoutCoordinator:
                     logger.error(f"Failed to deliver OpenAMS error '{message}' to AFC unit {unit}: {e}")
 
     @classmethod
-    def notify_lane_tool_state(cls, printer, name: str, lane_name: str, *, loaded: bool, spool_index: Optional[int] = None, eventtime: Optional[float] = None) -> bool:
+    def notify_lane_tool_state(cls, printer, name: str, lane_name: str, *, loaded: bool, spool_index: Optional[int] = None, eventtime: Optional[float] = None):
         """Propagate lane tool state changes from OpenAMS into AFC."""
         key = cls._key(printer, name)
         with cls._lock:
@@ -1036,7 +891,7 @@ class AMSRunoutCoordinator:
         return handled
 
     @classmethod
-    def mark_cross_extruder_runout(cls, printer, name: str, lane_name: str) -> bool:
+    def mark_cross_extruder_runout(cls, printer, name: str, lane_name: str):
         """Ask AFC units to mark a lane as participating in cross-extruder runout."""
 
         key = cls._key(printer, name)
@@ -1057,14 +912,14 @@ class AMSRunoutCoordinator:
         return handled
 
     @classmethod
-    def active_units(cls, printer, name: str) -> Iterable[Any]:
+    def active_units(cls, printer, name: str):
         """Return all AFC units registered for a specific OpenAMS instance."""
         key = cls._key(printer, name)
         with cls._lock:
             return tuple(cls._units.get(key, ()))
 
     @classmethod
-    def active_monitors(cls, printer, name: str) -> Iterable[Any]:
+    def active_monitors(cls, printer, name: str):
         """Return all runout monitors registered for a specific OpenAMS instance."""
         key = cls._key(printer, name)
         with cls._lock:
