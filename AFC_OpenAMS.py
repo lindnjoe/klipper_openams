@@ -4168,6 +4168,24 @@ class afcAMS(afcUnit):
                     f"Failed to clear virtual hub runout helper for {getattr(target_lane, 'name', '<unknown>')}: {e}"
                 )
 
+        def _lane_hardware_hub_has_filament(target_lane) -> bool:
+            """Return True when hardware hub sensor still reports filament for lane."""
+            if target_lane is None or self.oams is None:
+                return False
+            try:
+                spool_idx = self._get_openams_spool_index(target_lane)
+            except Exception:
+                spool_idx = None
+
+            if spool_idx is None or spool_idx < 0:
+                return False
+
+            hub_values = getattr(self.oams, "hub_hes_value", None)
+            if not hub_values or spool_idx >= len(hub_values):
+                return False
+
+            return bool(hub_values[spool_idx])
+
         if lane_state:
             # Filament at toolhead must have passed through hub - ensure hub indicator is correct.
             # hub_changed events are edge-triggered and can miss transitions when loaded_to_hub
@@ -4194,6 +4212,8 @@ class afcAMS(afcUnit):
                         or getattr(previous_lane, "_oams_runout_detected", False)
                         or getattr(previous_lane, "_oams_cross_extruder_runout", False)
                     )
+                    if not clear_previous_hub:
+                        clear_previous_hub = not _lane_hardware_hub_has_filament(previous_lane)
                     if clear_previous_hub:
                         _clear_lane_virtual_hub_sensor(previous_lane)
                 elif previous_lane_name == current_lane_name:
