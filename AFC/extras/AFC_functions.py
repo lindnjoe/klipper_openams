@@ -5,7 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
 # This file includes code modified from the Shaketune Project. https://github.com/Frix-x/klippain-shaketune
-# Originally authored by Félix Boisselier and licensed under the GNU General Public License v3.0.
+# Originally authored by F�lix Boisselier and licensed under the GNU General Public License v3.0.
 #
 # Full license text available at: https://www.gnu.org/licenses/gpl-3.0.html
 from __future__ import annotations
@@ -1423,19 +1423,21 @@ class afcFunction:
         fail_message    = gcmd.get("MSG", "")
         self._afc_cali_fail(cali, dis, reset_lane, title, fail_message, gcmd)
 
-    def _is_openams_lane(self, lane) -> bool:
-        """Return True if *lane* belongs to an OpenAMS unit."""
-        unit_obj = getattr(lane, "unit_obj", None)
-        return getattr(unit_obj, "type", None) == "OpenAMS"
-
-    def _lane_reset_command(self, lane, dis):
-        """Return the GCode command to reset *lane*.
-
-        Checks if the unit defines its own reset command (e.g. OpenAMS units
-        return TOOL_UNLOAD); falls back to AFC_LANE_RESET for standard units.
-        """
+    def _unit_lane_reset_command(self, lane, dis):
+        """Return a unit-provided lane reset command, if available."""
         if lane and hasattr(lane.unit_obj, 'get_lane_reset_command'):
             return lane.unit_obj.get_lane_reset_command(lane, dis)
+        return None
+
+    def _lane_uses_custom_reset_command(self, lane, dis) -> bool:
+        """Return True when *lane* should be reset with a unit-specific command."""
+        return self._unit_lane_reset_command(lane, dis) is not None
+
+    def _lane_reset_command(self, lane, dis):
+        """Return the GCode command to reset *lane*."""
+        custom_command = self._unit_lane_reset_command(lane, dis)
+        if custom_command is not None:
+            return custom_command
 
         if dis is not None:
             return "AFC_LANE_RESET LANE={} DISTANCE={}".format(lane.name, dis)
@@ -1471,17 +1473,17 @@ class afcFunction:
         title = 'AFC RESET'
         text = 'Select a loaded lane to reset'
 
-        has_openams = False
+        has_custom = False
         has_standard = False
 
         # Create buttons for each loaded lane
         for index, LANE in enumerate(self.afc.lanes.values()):
             if LANE.load_state:
                 button_command = self._lane_reset_command(LANE, dis)
-                if self._is_openams_lane(LANE):
-                    has_openams = True
-                    # OpenAMS lanes don't support reset-to-hub; redirect to TOOL_UNLOAD
-                    button_label = "{} (TOOL_UNLOAD)".format(LANE.name)
+                if self._lane_uses_custom_reset_command(LANE, dis):
+                    has_custom = True
+                    custom_cmd = button_command.split()[0] if button_command else "CUSTOM"
+                    button_label = "{} ({})".format(LANE.name, custom_cmd)
                     buttons.append((button_label, button_command, "info"))
                 else:
                     has_standard = True
@@ -1491,12 +1493,12 @@ class afcFunction:
 
         if not buttons:
             text = 'No lanes are loaded, a lane must be loaded to be reset'
-        elif has_openams and not has_standard:
-            text = ('OpenAMS lanes do not support reset-to-hub. '
-                    'Select a lane below to unload it from the toolhead using TOOL_UNLOAD.')
-        elif has_openams and has_standard:
+        elif has_custom and not has_standard:
+            text = ('Loaded lanes for this setup use unit-specific reset commands. '
+                    'Select a lane below to run its custom reset action.')
+        elif has_custom and has_standard:
             text = ('Select a loaded lane to reset. '
-                    'OpenAMS lanes (marked TOOL_UNLOAD) will unload from the toolhead instead of resetting to hub.')
+                    'Lanes marked with command names will run unit-specific reset actions instead of AFC_LANE_RESET.')
 
         prompt.create_custom_p(title, text, buttons,
                         True, None)
@@ -1551,13 +1553,13 @@ class afcFunction:
                 return
 
         cur_lane: Union[AFCLane, AFCExtruderStepper] = self.afc.lanes[lane]
-        if self._is_openams_lane(cur_lane):
+        custom_reset_command = self._unit_lane_reset_command(cur_lane, long_dis)
+        if custom_reset_command is not None:
             prompt.p_end()
             self.afc.gcode.respond_info(
-                f"{lane} is an OpenAMS lane and does not support reset-to-hub. "
-                f"Use 'TOOL_UNLOAD LANE={lane}' to unload the filament from the toolhead."
+                f"{lane} uses custom lane reset command: {custom_reset_command}"
             )
-            self.afc.gcode.run_script_from_command(f"TOOL_UNLOAD LANE={lane}")
+            self.afc.gcode.run_script_from_command(custom_reset_command)
             return
 
         CUR_HUB: afc_hub = cur_lane.hub_obj
@@ -1901,7 +1903,7 @@ class afcDeltaTime:
             curr_time = datetime.now()
             self.delta_time = (curr_time - self.last_time ).total_seconds()
             total_time = (curr_time - self.start_time).total_seconds()
-            msg = "{} (Δt:{:.3f}s, t:{:.3f})".format( msg, self.delta_time, total_time )
+            msg = "{} (?t:{:.3f}s, t:{:.3f})".format( msg, self.delta_time, total_time )
             if debug:
                 self.logger.debug( msg )
             else:
