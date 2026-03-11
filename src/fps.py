@@ -80,7 +80,7 @@ class FPS:
             self.adc.setup_minmax(self._sample_time, self._sample_count)
         else:
             self.adc.setup_adc_sample(self._sample_time, self._sample_count)
-        self.adc.setup_adc_callback(self._report_time, self._adc_callback)
+        self._setup_adc_callback_compat()
         
         # Register event handlers
         self.printer.register_event_handler("klippy:ready", self.on_ready)
@@ -95,8 +95,27 @@ class FPS:
         """Add a callback function to be called when FPS value changes."""
         self.callbacks.append(callback)
 
-    def _adc_callback(self, read_time: float, read_value: float) -> None:
+    def _setup_adc_callback_compat(self) -> None:
+        """Register ADC callback across Klipper/Kalico callback signatures.
+
+        Some ADC implementations expose ``setup_adc_callback(report_time, cb)``
+        while others expose ``setup_adc_callback(cb)`` with report interval
+        managed elsewhere. Support both to avoid startup failures.
+        """
+        try:
+            self.adc.setup_adc_callback(self._report_time, self._adc_callback)
+        except TypeError:
+            # Compatibility path for ADC implementations that only accept the
+            # callback argument.
+            self.adc.setup_adc_callback(self._adc_callback)
+
+    def _adc_callback(self, read_time: float, read_value: Optional[float] = None) -> None:
         """Process new ADC reading and notify callbacks."""
+        # Compatibility path for callbacks that only pass a single value.
+        if read_value is None:
+            read_value = read_time
+            read_time = self.reactor.monotonic()
+
         if self._reversed:
             read_value = 1.0 - read_value
         self.fps_value = read_value
