@@ -590,8 +590,19 @@ class afcAMS(afcUnit):
                 afc.error.handle_lane_failure(cur_lane, message)
                 return False
 
-            # After unload, filament is loaded in AMS (at f1s position), ready for next load
-            cur_lane.loaded_to_hub = True
+            # After unload, read the actual hub sensor to determine if filament
+            # is still at the hub.  The OAMS unload retracts filament back to the
+            # spool bay (past the hub sensor), so hub_hes_value will typically be 0.
+            # Hardcoding True here previously caused stale hub status on swaps.
+            hub_loaded = False
+            try:
+                spool_idx = self._get_openams_spool_index(cur_lane)
+                hub_values = getattr(self.oams, "hub_hes_value", None)
+                if hub_values is not None and spool_idx is not None and 0 <= spool_idx < len(hub_values):
+                    hub_loaded = bool(hub_values[spool_idx])
+            except Exception:
+                hub_loaded = False
+            cur_lane.loaded_to_hub = hub_loaded
             cur_lane.set_tool_unloaded()
             cur_lane.status = AFCLaneState.LOADED
             self.lane_tool_unloaded(cur_lane)
